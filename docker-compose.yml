@@ -19,4 +19,5 @@ services:
 
 networks:
   redis_net:
-    external: true
+    external:
+      name: redis_redis_net
