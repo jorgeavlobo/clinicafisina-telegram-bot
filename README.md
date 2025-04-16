@@ -1,6 +1,6 @@
 # Clinica Fisina Telegram Bot
 
-![Telegram Logo](https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg)
+<img src="https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" width="10%" alt="Telegram Logo">
 
 **Clinica Fisina Telegram Bot** is a Dockerized bot built with [Aiogram](https://github.com/aiogram/aiogram), designed to manage client interactions and appointments for Clinica Fisina. It leverages Redis for Finite State Machine (FSM) state storage and PostgreSQL for client data and logging. The bot is deployed on an OVHcloud VPS and automated via GitHub Actions for seamless updates.
 
