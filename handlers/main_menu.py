@@ -2,6 +2,7 @@ from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
+from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
 from states.menu_states import MenuStates
 
@@ -18,7 +19,10 @@ async def cmd_start(message: Message, state: FSMContext):
     await state.set_state(MenuStates.main)
 
     # Build a custom reply keyboard for Options 1 and 2 (main menu)
-    main_reply_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    rb = ReplyKeyboardBuilder()
+    rb.button(text="Option 1")
+    rb.button(text="Option 2")
+    main_reply_kb = rb.as_markup(resize_keyboard=True)
     main_reply_kb.add(KeyboardButton("Option 1"), KeyboardButton("Option 2"))
 
     # Build an inline keyboard for Options 3 and 4 (main menu)
