@@ -1,6 +1,6 @@
 services:
   bot:
-    build: .
+    image: ghcr.io/jorgeavlobo/clinicafisina-telegram-bot:latest
     container_name: clinicafisina_telegram_bot
     extra_hosts:
       - "host.docker.internal:host-gateway"
