@@ -4,12 +4,28 @@ from os import getenv
 from aiogram import Bot, Dispatcher, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
+from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.fsm.storage.base import DefaultKeyBuilder
+from redis.asyncio import Redis
+from datetime import timedelta
+from config import REDIS_HOST, REDIS_PORT, REDIS_DB, REDIS_PREFIX, TELEGRAM_TOKEN
 
-# Get the bot token from environment variables
-TELEGRAM_TOKEN = getenv("TELEGRAM_TOKEN")
+# Create Redis connection
+redis = Redis(host=REDIS_HOST, port=int(REDIS_PORT), db=int(REDIS_DB))
 
-# Initialize the dispatcher with default in-memory storage
-dp = Dispatcher()
+# Create key builder with custom prefix
+key_builder = DefaultKeyBuilder(prefix=REDIS_PREFIX)
+
+# Create storage with TTL (e.g., 24 hours)
+storage = RedisStorage(
+    redis=redis,
+    key_builder=key_builder,
+    state_ttl=timedelta(hours=24),
+    data_ttl=timedelta(hours=24)
+)
+
+# Initialize the dispatcher with Redis storage
+dp = Dispatcher(storage=storage)
 
 # Set up router
 router = Router()
