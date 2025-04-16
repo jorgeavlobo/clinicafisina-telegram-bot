@@ -12,6 +12,10 @@ services:
       - DB_NAME_LOGS=${DB_NAME_LOGS}
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_DB=${REDIS_DB}
+      - REDIS_PREFIX=${REDIS_PREFIX}
     depends_on:
       - redis
     networks:
