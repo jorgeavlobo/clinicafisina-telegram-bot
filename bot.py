@@ -1,10 +1,4 @@
-"""
-bot.py
-
-Main script for the Clinica Fisina Telegram bot, handling user interactions
-with FSM state storage in Redis.
-"""
-
+import asyncio
 from aiogram import Bot, Dispatcher, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.storage.redis import RedisStorage
@@ -26,26 +20,30 @@ redis_client = Redis(
     decode_responses=True
 )
 
-# Initialize storage with the Redis client and a custom prefix
+# Initialize storage with custom prefix
 storage = RedisStorage(
     redis=redis_client,
     key_builder=DefaultKeyBuilder(with_prefix=REDIS_PREFIX)
 )
 
-# Initialize bot and dispatcher
-bot = Bot(token=TELEGRAM_TOKEN)
+# Initialize dispatcher with storage
 dp = Dispatcher(storage=storage)
 
-# Set up router and handlers
+# Set up router
 router = Router()
 
+# Command handler
 @router.message(CommandStart())
-async def cmd_start(message):
+async def command_start_handler(message):
     await message.reply("Hello! Welcome to the Clinica Fisina Telegram bot.")
 
 # Include the router in the dispatcher
 dp.include_router(router)
 
 # Run the bot
+async def main():
+    bot = Bot(token=TELEGRAM_TOKEN)
+    await dp.start_polling(bot, skip_updates=True)
+
 if __name__ == "__main__":
-    dp.run_polling(bot, skip_updates=True)
+    asyncio.run(main())
