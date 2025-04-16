@@ -1,0 +1,46 @@
+# Python-specific ignores
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.whl
+
+# Virtual environments
+venv/
+.env
+
+# Docker-specific ignores
+Dockerfile.*
+.dockerignore
+
+# Sensitive files
+config.py
+.env
+secrets.yaml
+*.pem
+*.key
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# IDE-specific files
+.vscode/
+.idea/
+*.sublime-project
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Database dumps or backups
+*.sql
+*.bak
+
+# Build artifacts
+/dist/
+/build/
+
+# Dependency directories
+node_modules/
