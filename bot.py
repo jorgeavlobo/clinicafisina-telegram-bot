@@ -4,34 +4,12 @@ from os import getenv
 from aiogram import Bot, Dispatcher, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
-from aiogram.fsm.storage.redis import RedisStorage
-from aiogram.fsm.key_builders import DefaultKeyBuilder
-from redis.asyncio import Redis
-from config import (
-    TELEGRAM_TOKEN,
-    REDIS_HOST,
-    REDIS_PORT,
-    REDIS_DB,
-    REDIS_PREFIX,
-)
 
-# Initialize Redis client
-redis_client = Redis(
-    host=REDIS_HOST,
-    port=REDIS_PORT,
-    db=REDIS_DB,
-    decode_responses=True
-)
+# Get the bot token from environment variables
+TOKEN = getenv("TELEGRAM_TOKEN")
 
-# Initialize storage with custom prefix
-storage = RedisStorage(
-    redis=redis_client,
-    key_builder=DefaultKeyBuilder(with_prefix=REDIS_PREFIX)
-)
-
-# Initialize bot and dispatcher with storage
-bot = Bot(token=TELEGRAM_TOKEN)
-dp = Dispatcher(storage=storage)
+# Initialize the dispatcher with default in-memory storage
+dp = Dispatcher()
 
 # Set up router
 router = Router()
@@ -61,6 +39,7 @@ dp.include_router(router)
 
 # Run the bot
 async def main() -> None:
+    bot = Bot(token=TOKEN)
     await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
