@@ -6,7 +6,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
 # Get the bot token from environment variables
-TOKEN = getenv("TELEGRAM_TOKEN")
+TELEGRAM_TOKEN = getenv("TELEGRAM_TOKEN")
 
 # Initialize the dispatcher with default in-memory storage
 dp = Dispatcher()
@@ -17,7 +17,7 @@ router = Router()
 # Command handler for /start
 @router.message(CommandStart())
 async def command_start_handler(message: Message) -> None:
-    await message.reply("Hello! Welcome to the Clinica Fisina Telegram bot.")
+    await message.reply("Olá! Bem-vindo à Clínica Fisina.")
 
 # Command handler for /services
 @router.message(Command("services"))
@@ -32,14 +32,14 @@ async def command_team_handler(message: Message) -> None:
 # Command handler for /contacts
 @router.message(Command("contacts"))
 async def command_contacts_handler(message: Message) -> None:
-    await message.reply("Contact us at:\n- Email: geral@fisina.pt\n- Phone: +351 910 910 910")
+    await message.reply("Contacte-nos:\n- Email: geral@fisina.pt\n- Phone: +351 910 910 910")
 
 # Include the router in the dispatcher
 dp.include_router(router)
 
 # Run the bot
 async def main() -> None:
-    bot = Bot(token=TOKEN)
+    bot = Bot(token=TELEGRAM_TOKEN)
     await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
