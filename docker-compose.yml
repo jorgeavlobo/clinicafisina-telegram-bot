@@ -14,8 +14,6 @@ services:
       - REDIS_PORT=${REDIS_PORT}
       - REDIS_DB=${REDIS_DB}
       - REDIS_PREFIX=${REDIS_PREFIX}
-    depends_on:
-      - redis
     networks:
       - redis_net
 
