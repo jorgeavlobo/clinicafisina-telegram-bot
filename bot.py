@@ -2,7 +2,7 @@
 bot.py
 
 Main script for the Clinica Fisina Telegram bot, handling user interactions
-with FSM state storage in Redis and data/logging in PostgreSQL databases.
+with FSM state storage in Redis.
 """
 
 from aiogram import Bot, Dispatcher, Router
@@ -26,7 +26,7 @@ redis_client = Redis(
     decode_responses=True
 )
 
-# Initialize storage with custom prefix
+# Initialize storage with the Redis client and a custom prefix
 storage = RedisStorage(
     redis=redis_client,
     key_builder=DefaultKeyBuilder(with_prefix=REDIS_PREFIX)
@@ -46,5 +46,6 @@ async def cmd_start(message):
 # Include the router in the dispatcher
 dp.include_router(router)
 
-if __name__ == '__main__':
+# Run the bot
+if __name__ == "__main__":
     dp.run_polling(bot, skip_updates=True)
