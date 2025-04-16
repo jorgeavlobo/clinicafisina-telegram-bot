@@ -7,6 +7,7 @@ with FSM state storage in Redis and data/logging in PostgreSQL databases.
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.redis import RedisStorage
+from redis.asyncio import Redis
 from config import (
     TELEGRAM_TOKEN,
     REDIS_HOST,
@@ -15,17 +16,20 @@ from config import (
     REDIS_PREFIX,
 )
 
-# Initialize bot and storage
-bot = Bot(token=TELEGRAM_TOKEN)
-storage = RedisStorage(
+# Initialize Redis client
+redis_client = Redis(
     host=REDIS_HOST,
     port=REDIS_PORT,
     db=REDIS_DB,
-    prefix=REDIS_PREFIX
+    decode_responses=True
 )
+
+# Initialize bot and storage
+bot = Bot(token=TELEGRAM_TOKEN)
+storage = RedisStorage(redis=redis_client, key_builder=DefaultKeyBuilder(with_prefix=REDIS_PREFIX))
 dp = Dispatcher(bot=bot, storage=storage)
 
-# Example handler (replace with your bot's logic)
+# Example handler
 from aiogram import Router
 from aiogram.filters import CommandStart
 
