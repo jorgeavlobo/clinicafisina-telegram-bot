@@ -38,12 +38,12 @@ async def command_start_handler(message: Message) -> None:
 # Command handler for /services
 @router.message(Command("services"))
 async def command_services_handler(message: Message) -> None:
-    await message.reply("Our services include:\n- Service 1\n- Service 2\n- Service 3")
+    await message.reply("Os nossos serviços incluem:\n- Service 1\n- Service 2\n- Service 3")
 
 # Command handler for /team
 @router.message(Command("team"))
 async def command_team_handler(message: Message) -> None:
-    await message.reply("Meet our team:\n- Member 1\n- Member 2\n- Member 3")
+    await message.reply("Conhece a nossa equipa:\n- Member 1\n- Member 2\n- Member 3")
 
 # Command handler for /contacts
 @router.message(Command("contacts"))
