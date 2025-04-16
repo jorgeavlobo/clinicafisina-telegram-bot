@@ -2,6 +2,8 @@ import os
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
 from redis.asyncio import Redis  # using redis-py asyncio for Redis connection
 from dotenv import load_dotenv
@@ -20,7 +22,10 @@ REDIS_PREFIX = os.getenv("REDIS_PREFIX", "fsm")
 logging.basicConfig(level=logging.INFO)
 
 # Initialize bot and dispatcher with Redis FSM storage
-bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 # Connect to Redis and configure FSM storage with 24h TTL for states and data
 redis = Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
 storage = RedisStorage(
