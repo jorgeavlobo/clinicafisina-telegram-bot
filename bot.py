@@ -32,7 +32,7 @@ async def command_team_handler(message: Message) -> None:
 # Command handler for /contacts
 @router.message(Command("contacts"))
 async def command_contacts_handler(message: Message) -> None:
-    await message.reply("Contact us at:\n- Email: contact@clinic.com\n- Phone: +123456789")
+    await message.reply("Contact us at:\n- Email: geral@fisina.pt\n- Phone: +351 910 910 910")
 
 # Include the router in the dispatcher
 dp.include_router(router)
