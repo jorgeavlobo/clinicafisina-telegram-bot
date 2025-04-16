@@ -5,8 +5,10 @@ Main script for the Clinica Fisina Telegram bot, handling user interactions
 with FSM state storage in Redis and data/logging in PostgreSQL databases.
 """
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, Router
+from aiogram.filters import CommandStart
 from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.fsm.key_builders import DefaultKeyBuilder
 from redis.asyncio import Redis
 from config import (
     TELEGRAM_TOKEN,
@@ -24,15 +26,17 @@ redis_client = Redis(
     decode_responses=True
 )
 
-# Initialize bot and storage
+# Initialize storage with custom prefix
+storage = RedisStorage(
+    redis=redis_client,
+    key_builder=DefaultKeyBuilder(with_prefix=REDIS_PREFIX)
+)
+
+# Initialize bot and dispatcher
 bot = Bot(token=TELEGRAM_TOKEN)
-storage = RedisStorage(redis=redis_client, key_builder=DefaultKeyBuilder(with_prefix=REDIS_PREFIX))
-dp = Dispatcher(bot=bot, storage=storage)
+dp = Dispatcher(storage=storage)
 
-# Example handler
-from aiogram import Router
-from aiogram.filters import CommandStart
-
+# Set up router and handlers
 router = Router()
 
 @router.message(CommandStart())
