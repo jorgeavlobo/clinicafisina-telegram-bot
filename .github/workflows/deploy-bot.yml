@@ -3,7 +3,7 @@ name: Build and Deploy Clinica Fisina Telegram Bot
 on:
   push:
     branches:
-      - main
+      - mainXXX
 
 jobs:
   build_and_deploy:
