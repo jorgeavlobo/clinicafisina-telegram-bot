@@ -1,86 +1,53 @@
-from aiogram import Router, F, Bot
-from aiogram.types import (
-    Message,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-)
+from aiogram import Router, F
+from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
-from aiogram.utils.keyboard import ReplyKeyboardBuilder
+from aiogram.utils.keyboard import InlineKeyboardBuilder, InlineKeyboardButton
 
 from states.menu_states import MenuStates
 
 router = Router()
 
 
-@router.message(MenuStates.main, F.text == "Option 1")
-async def enter_option1(message: Message, state: FSMContext, bot: Bot):
-    """Enter Option 1 submenu."""
-    data = await state.get_data()
-    inline_msg_id = data.get("inline_msg_id")
-    if inline_msg_id:
-        await bot.delete_message(message.chat.id, inline_msg_id)
-
+@router.callback_query(MenuStates.main, F.data == "opt1")
+async def enter_option1(cb: CallbackQuery, state: FSMContext):
+    """Option 1 submenu (inline)."""
     await state.set_state(MenuStates.option1)
 
-    # submenu reply keyboard
-    rb = ReplyKeyboardBuilder()
-    rb.button(text="Sub-option 1.1")
-    rb.button(text="Sub-option 1.2")
-    rb.button(text="Back")
-    rb.adjust(2, 1)                                # two buttons first row, one second
-    sub_reply_kb = rb.as_markup(resize_keyboard=True)
-
-    sub_menu_msg = await message.answer(
-        "You are now in the Option 1 menu. Select a sub‑option or go back.",
-        reply_markup=sub_reply_kb,
-    )
-    await state.update_data(option1_msg_id=sub_menu_msg.message_id)
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Sub-option 1.1", callback_data="1.1")
+    kb.button(text="Sub-option 1.2", callback_data="1.2")
+    kb.button(text="Back", callback_data="back")
+    kb.adjust(2, 1)
+    await cb.message.edit_text("Option 1 menu:", reply_markup=kb.as_markup())
+    await cb.answer()
 
 
-@router.message(MenuStates.option1, F.text == "Sub-option 1.1")
-async def option1_sub1(message: Message, state: FSMContext):
-    await message.answer("You selected sub-option 1.1")
+def _close_inline(cb: CallbackQuery):
+    """Helper to remove inline keyboard after final choice."""
+    return cb.message.edit_reply_markup(reply_markup=None)
 
 
-@router.message(MenuStates.option1, F.text == "Sub-option 1.2")
-async def option1_sub2(message: Message, state: FSMContext):
-    await message.answer("You selected sub-option 1.2")
+@router.callback_query(MenuStates.option1, F.data.in_(["1.1", "1.2"]))
+async def option1_final(cb: CallbackQuery, state: FSMContext):
+    choice = cb.data
+    await _close_inline(cb)
+    await cb.message.answer(f"You selected sub-option {choice}")
+    await state.clear()
+    await cb.answer()
 
 
-@router.message(MenuStates.option1, F.text == "Back")
-async def exit_option1(message: Message, state: FSMContext, bot: Bot):
-    """Return to main menu from Option 1 submenu."""
+@router.callback_query(MenuStates.option1, F.data == "back")
+async def option1_back(cb: CallbackQuery, state: FSMContext):
+    """Return to main inline menu."""
     data = await state.get_data()
-    sub_msg_id = data.get("option1_msg_id")
-    if sub_msg_id:
-        await bot.delete_message(message.chat.id, sub_msg_id)
-
+    menu_msg_id = data.get("menu_msg_id")
     await state.set_state(MenuStates.main)
 
-    # rebuild main reply keyboard
-    rb = ReplyKeyboardBuilder()
-    rb.button(text="Option 1")
-    rb.button(text="Option 2")
-    rb.adjust(2)
-    main_reply_kb = rb.as_markup(resize_keyboard=True)
-
-    main_inline_kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Option 3", callback_data="opt3"),
-                InlineKeyboardButton(text="Option 4", callback_data="opt4"),
-            ]
-        ]
-    )
-
-    reply_msg = await message.answer(
-        "Back to main menu. Use the keyboard for Option 1/2.",
-        reply_markup=main_reply_kb,
-    )
-    inline_msg = await message.answer(
-        "Select an inline option:", reply_markup=main_inline_kb
-    )
-    await state.update_data(inline_msg_id=inline_msg.message_id)
-
-    await message.delete()
-    await reply_msg.delete()
+    # rebuild main menu inline keyboard
+    kb = InlineKeyboardBuilder()
+    for text, cd in [("Option 1", "opt1"), ("Option 2", "opt2"),
+                     ("Option 3", "opt3"), ("Option 4", "opt4")]:
+        kb.button(text=text, callback_data=cd)
+    kb.adjust(2)
+    await cb.message.edit_text("Main menu: choose an option.", reply_markup=kb.as_markup())
+    await cb.answer()
