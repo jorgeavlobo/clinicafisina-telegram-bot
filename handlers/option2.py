@@ -1,84 +1,43 @@
-from aiogram import Router, F, Bot
-from aiogram.types import (
-    Message,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-)
+from aiogram import Router, F
+from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
-from aiogram.utils.keyboard import ReplyKeyboardBuilder
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from states.menu_states import MenuStates
+from handlers.option1 import _close_inline  # reuse helper
 
 router = Router()
 
 
-@router.message(MenuStates.main, F.text == "Option 2")
-async def enter_option2(message: Message, state: FSMContext, bot: Bot):
-    """Enter Option 2 submenu."""
-    data = await state.get_data()
-    inline_msg_id = data.get("inline_msg_id")
-    if inline_msg_id:
-        await bot.delete_message(message.chat.id, inline_msg_id)
-
+@router.callback_query(MenuStates.main, F.data == "opt2")
+async def enter_option2(cb: CallbackQuery, state: FSMContext):
     await state.set_state(MenuStates.option2)
 
-    rb = ReplyKeyboardBuilder()
-    rb.button(text="Sub-option 2.1")
-    rb.button(text="Sub-option 2.2")
-    rb.button(text="Back")
-    rb.adjust(2, 1)
-    sub_reply_kb = rb.as_markup(resize_keyboard=True)
-
-    sub_menu_msg = await message.answer(
-        "You are now in the Option 2 menu. Select a sub‑option or go back.",
-        reply_markup=sub_reply_kb,
-    )
-    await state.update_data(option2_msg_id=sub_menu_msg.message_id)
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Sub-option 2.1", callback_data="2.1")
+    kb.button(text="Sub-option 2.2", callback_data="2.2")
+    kb.button(text="Back", callback_data="back")
+    kb.adjust(2, 1)
+    await cb.message.edit_text("Option 2 menu:", reply_markup=kb.as_markup())
+    await cb.answer()
 
 
-@router.message(MenuStates.option2, F.text == "Sub-option 2.1")
-async def option2_sub1(message: Message, state: FSMContext):
-    await message.answer("You selected sub-option 2.1")
+@router.callback_query(MenuStates.option2, F.data.in_(["2.1", "2.2"]))
+async def option2_final(cb: CallbackQuery, state: FSMContext):
+    await _close_inline(cb)
+    await cb.message.answer(f"You selected sub-option {cb.data}")
+    await state.clear()
+    await cb.answer()
 
 
-@router.message(MenuStates.option2, F.text == "Sub-option 2.2")
-async def option2_sub2(message: Message, state: FSMContext):
-    await message.answer("You selected sub-option 2.2")
-
-
-@router.message(MenuStates.option2, F.text == "Back")
-async def exit_option2(message: Message, state: FSMContext, bot: Bot):
-    """Return to main menu from Option 2 submenu."""
-    data = await state.get_data()
-    sub_msg_id = data.get("option2_msg_id")
-    if sub_msg_id:
-        await bot.delete_message(message.chat.id, sub_msg_id)
-
+@router.callback_query(MenuStates.option2, F.data == "back")
+async def option2_back(cb: CallbackQuery, state: FSMContext):
     await state.set_state(MenuStates.main)
 
-    rb = ReplyKeyboardBuilder()
-    rb.button(text="Option 1")
-    rb.button(text="Option 2")
-    rb.adjust(2)
-    main_reply_kb = rb.as_markup(resize_keyboard=True)
-
-    main_inline_kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Option 3", callback_data="opt3"),
-                InlineKeyboardButton(text="Option 4", callback_data="opt4"),
-            ]
-        ]
-    )
-
-    reply_msg = await message.answer(
-        "Back to main menu. Use the keyboard for Option 1/2.",
-        reply_markup=main_reply_kb,
-    )
-    inline_msg = await message.answer(
-        "Select an inline option:", reply_markup=main_inline_kb
-    )
-    await state.update_data(inline_msg_id=inline_msg.message_id)
-
-    await message.delete()
-    await reply_msg.delete()
+    kb = InlineKeyboardBuilder()
+    for text, cd in [("Option 1", "opt1"), ("Option 2", "opt2"),
+                     ("Option 3", "opt3"), ("Option 4", "opt4")]:
+        kb.button(text=text, callback_data=cd)
+    kb.adjust(2)
+    await cb.message.edit_text("Main menu: choose an option.", reply_markup=kb.as_markup())
+    await cb.answer()
