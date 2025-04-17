@@ -11,22 +11,36 @@ router = Router()
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
-    """Show the all‑inline main menu."""
+    """
+    Show the all‑inline main menu.
+    If the user already has a menu message, delete it first to avoid duplicates.
+    """
+    # try to delete previous menu (before clearing storage!)
+    prev = await state.get_data()
+    prev_id = prev.get("menu_msg_id")
+    if prev_id:
+        try:
+            await message.bot.delete_message(message.chat.id, prev_id)
+        except Exception:
+            pass  # message might be gone already
+
     await state.clear()
     await state.set_state(MenuStates.main)
 
     kb = InlineKeyboardBuilder()
-    kb.button(text="Option 1", callback_data="opt1")
-    kb.button(text="Option 2", callback_data="opt2")
-    kb.button(text="Option 3", callback_data="opt3")
-    kb.button(text="Option 4", callback_data="opt4")
-    kb.adjust(2)                 # 2 per row → rows: [1,2] [3,4]
-    main_inline_kb = kb.as_markup()
+    for text, cd in [
+        ("Option 1", "opt1"),
+        ("Option 2", "opt2"),
+        ("Option 3", "opt3"),
+        ("Option 4", "opt4"),
+    ]:
+        kb.button(text=text, callback_data=cd)
+    kb.adjust(2)  # two buttons per row
 
     menu_msg = await message.answer(
-        "Main menu: choose an option.", reply_markup=main_inline_kb
+        "Main menu: choose an option.", reply_markup=kb.as_markup()
     )
     await state.update_data(menu_msg_id=menu_msg.message_id)
 
-    # delete command for clean UI
+    # delete the /start command itself for a clean chat
     await message.delete()
