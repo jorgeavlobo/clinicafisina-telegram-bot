@@ -5,8 +5,9 @@ from typing import Any
 from infra.db_async import DBPools
 
 INSERT_SQL = """
-INSERT INTO clinicafisina_telegram_bot (level, telegram_user_id, message)
-VALUES ($1, $2, $3)
+INSERT INTO clinicafisina_telegram_bot
+    (level, telegram_user_id, chat_id, message)
+VALUES ($1,  $2,               $3,      $4)
 """
 
 class PGHandler(logging.Handler):
@@ -23,14 +24,15 @@ class PGHandler(logging.Handler):
             # Outside of event‑loop (e.g., gunicorn preload); skip
             return
 
-        telegram_uid: Any = getattr(record, "telegram_user_id", None)
-        msg = self.format(record)
-        level = record.levelname
+        telegram_uid = getattr(record, "telegram_user_id", None)
+        chat_id      = getattr(record, "chat_id", None)
+        msg          = self.format(record)
+        level        = record.levelname
 
         async def _write():
             try:
                 async with DBPools.pool_logs.acquire() as conn:
-                    await conn.execute(INSERT_SQL, level, telegram_uid, msg)
+                    await conn.execute(INSERT_SQL, level, telegram_uid, chat_id, msg)
             except Exception as e:
                 # fall back to stderr if DB fails
                 logging.getLogger(__name__).error(
