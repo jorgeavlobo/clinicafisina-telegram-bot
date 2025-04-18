@@ -1,143 +1,101 @@
-name: Build and Deploy Clinica Fisina Telegram Bot
-
+# .github/workflows/deploy-bot.yml
+name: Build & Deploy ➜ Clinica Fisina Bot
 on:
   push:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
-  build_and_deploy:
+# ────────────────────────────────────────────────────────────────────────
+# 1.  Lint (ruff + black --check)  — fast, runs in ~15 s
+# ────────────────────────────────────────────────────────────────────────
+  lint:
     runs-on: ubuntu-latest
-
     steps:
-      ########################################################################
-      # 1. Check out your repository in GitHub Actions
-      ########################################################################
-      - name: Check out code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+      - name: Ruff
+        uses: chartboost/ruff-action@v1
+        with:
+          args: "--output-format=github"
+      - name: Black – check only
+        uses: psf/black@stable
+        with:
+          options: "--check --verbose"
+    outputs:
+      cache-key: ${{ steps.rust-cache.outputs.cache-key }} # dummy – see Job #2 note
 
-      ########################################################################
-      # 2. Set up QEMU (for cross-building) and Docker Buildx
-      ########################################################################
-      - name: Set up QEMU
+# ────────────────────────────────────────────────────────────────────────
+# 2.  Build & push image  (only if   needs: lint   succeeded)
+# ────────────────────────────────────────────────────────────────────────
+  build:
+    needs: lint
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write      # needed for GHCR push with GITHUB_TOKEN
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (cross‑build)
         uses: docker/setup-qemu-action@v2
+        with:
+          platforms: linux/amd64,linux/arm64
 
-      - name: Set up Docker Buildx
+      - name: Set up Buildx
         uses: docker/setup-buildx-action@v2
 
-      ########################################################################
-      # 3. Log in to GitHub Container Registry (GHCR)
-      ########################################################################
-      - name: Log in to GHCR
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ secrets.GHCR_USERNAME }}
-          password: ${{ secrets.GHCR_PAT }}
-
-      ########################################################################
-      # 4. Build and Push Docker image with inline caching
-      ########################################################################
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v3
+      - name: Build & push (GHCR)
+        uses: docker/build-push-action@v5
         with:
           context: .
-          push: true
+          push:   true
           tags: |
             ghcr.io/jorgeavlobo/clinicafisina-telegram-bot:latest
             ghcr.io/jorgeavlobo/clinicafisina-telegram-bot:${{ github.sha }}
-          cache-from: type=registry,ref=ghcr.io/jorgeavlobo/clinicafisina-telegram-bot:cache
-          cache-to: type=registry,ref=ghcr.io/jorgeavlobo/clinicafisina-telegram-bot:cache,mode=max
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
 
-      ########################################################################
-      # 5. SSH into server and deploy updated containers
-      ########################################################################
-      - name: Deploy Bot via SSH
-        uses: appleboy/ssh-action@master
+# ────────────────────────────────────────────────────────────────────────
+# 3.  SSH deploy  (runs only if image build succeeded)
+# ────────────────────────────────────────────────────────────────────────
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.0
         with:
-          host: ${{ secrets.OVH_VPS_HOST }}
-          username: ${{ secrets.OVH_VPS_USERNAME }}
-          key: ${{ secrets.OVH_VPS_SSH_PRIVATE_KEY }}
-          passphrase: ${{ secrets.OVH_VPS_SSH_PASSPHRASE }}
-          port: 42922
+          host:       ${{ secrets.OVH_VPS_HOST }}
+          username:   ${{ secrets.OVH_VPS_USERNAME }}
+          key:        ${{ secrets.OVH_VPS_SSH_PRIVATE_KEY }}
+          port:       42922
           script: |
-            set -e
+            set -Eeuo pipefail
+            trap 'rm -f ~/.ssh/github_actions_key || true' EXIT
 
-            # A) Ensure /opt/clinicafisina_telegram_bot exists
-            echo "Checking /opt/clinicafisina_telegram_bot..."
-            if [ ! -d "/opt/clinicafisina_telegram_bot" ]; then
-              echo "Directory does not exist. Creating..."
-              sudo mkdir -p /opt/clinicafisina_telegram_bot || { echo "❌ Failed to create /opt/clinicafisina_telegram_bot"; exit 1; }
-              sudo chown $USER:$USER /opt/clinicafisina_telegram_bot || { echo "❌ Failed to change ownership of /opt/clinicafisina_telegram_bot"; exit 1; }
-              sudo chmod 755 /opt/clinicafisina_telegram_bot || { echo "❌ Failed to set permissions on /opt/clinicafisina_telegram_bot"; exit 1; }
-            else
-              echo "/opt/clinicafisina_telegram_bot already exists."
-            fi
+            PROJECT_DIR=/opt/clinicafisina_telegram_bot
+            IMAGE=ghcr.io/jorgeavlobo/clinicafisina-telegram-bot:latest
 
-            # B) Move to project directory
-            echo "Changing into /opt/clinicafisina_telegram_bot"
-            cd /opt/clinicafisina_telegram_bot || { echo "❌ Failed to enter /opt/clinicafisina_telegram_bot"; exit 1; }
+            echo "► ensuring project dir exists"
+            sudo mkdir -p "$PROJECT_DIR"
+            sudo chown $USER:$USER "$PROJECT_DIR"
+            cd "$PROJECT_DIR"
 
-            # C) Set up SSH key for GitHub
-            echo "Configuring SSH for Git operations..."
-            mkdir -p ~/.ssh
-            echo "${{ secrets.OVH_VPS_SSH_PRIVATE_KEY }}" > ~/.ssh/github_actions_key
-            chmod 600 ~/.ssh/github_actions_key
-            ssh-keyscan -H github.com >> ~/.ssh/known_hosts
-            chmod 644 ~/.ssh/known_hosts
-            eval "$(ssh-agent -s)"
-            SSH_ASKPASS=/bin/echo sh -c "echo ${{ secrets.OVH_VPS_SSH_PASSPHRASE }} | ssh-add ~/.ssh/github_actions_key" || {
-              echo "❌ Failed to add SSH key"
-              exit 1
-            }
-
-            # D) Sync the Git repository
+            echo "► pulling latest docker‑compose file"
             if [ ! -d .git ]; then
-              echo "Cloning fresh repo..."
-              git clone --depth=1 git@github.com:jorgeavlobo/clinicafisina-telegram-bot.git . || {
-                echo "❌ Git clone failed"
-                exit 1
-              }
+              git clone --depth=1 git@github.com:jorgeavlobo/clinicafisina-telegram-bot.git .
             else
-              echo "Syncing with latest commit on 'main'..."
-              git fetch --all || { echo "❌ Git fetch failed"; exit 1; }
-              git reset --hard origin/main || { echo "❌ Git reset failed"; exit 1; }
-              git clean -fd || { echo "❌ Git clean failed"; exit 1; }
+              git fetch --all
+              git reset --hard origin/main
+              git clean -fd
             fi
 
-            # E) Check for docker-compose.yml
-            echo "Verifying docker-compose.yml exists..."
-            if [ ! -f docker-compose.yml ]; then
-              echo "❌ ERROR: docker-compose.yml not found!"
-              exit 1
-            fi
+            echo "► docker login GHCR with short‑lived token"
+            echo "${{ github.token }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            # F) Log in to GHCR
-            echo "Logging into GHCR..."
-            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ secrets.GHCR_USERNAME }} --password-stdin || {
-              echo "❌ Failed to authenticate with GHCR"
-              exit 1
-            }
+            echo "► pulling updated image layers"
+            docker compose pull
 
-            # G) Pull and restart containers
-            echo "Pulling updated image..."
-            docker-compose pull || { echo "❌ Failed to pull Docker image"; exit 1; }
+            echo "► recreating container"
+            docker compose up -d
 
-            echo "Recreating containers..."
-            docker-compose up -d || { echo "❌ Failed to start containers"; exit 1; }
-
-            # ✅ Enhanced container running check
-            echo "Verifying clinicafisina_telegram_bot container is running..."
-            if [ -z "$(docker ps -q -f name=clinicafisina_telegram_bot -f status=running)" ]; then
-              echo "❌ clinicafisina_telegram_bot container is not running"
-              exit 1
-            fi
-
-            # H) Cleanup
-            echo "Cleaning up SSH key..."
-            rm ~/.ssh/github_actions_key
-            ssh-add -D
-            ssh-agent -k
-
-            echo "✅ Deployment completed successfully."
-            exit 0
+            echo "► done."
