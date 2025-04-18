@@ -1,101 +1,118 @@
-# .github/workflows/deploy-bot.yml
-name: Build & Deploy ➜ Clinica Fisina Bot
+name: Build ➜ Lint ➜ Deploy • Clínica Fisina Telegram bot
 on:
   push:
-    branches: [main]
+    branches: [main]      # run automatically on every push to main
+  workflow_dispatch:      # …and allow manual runs
 
+# prevent two concurrent deploys from racing
+concurrency:
+  group: "deploy-bot"
+  cancel-in-progress: true
+
+###############################################################################
+# 1️⃣  Ruff code‑style / quality check
+###############################################################################
 jobs:
-# ────────────────────────────────────────────────────────────────────────
-# 1.  Lint (ruff + black --check)  — fast, runs in ~15 s
-# ────────────────────────────────────────────────────────────────────────
   lint:
+    name: Ruff lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Ruff
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Run Ruff
         uses: chartboost/ruff-action@v1
         with:
-          args: "--output-format=github"
-      - name: Black – check only
-        uses: psf/black@stable
-        with:
-          options: "--check --verbose"
-    outputs:
-      cache-key: ${{ steps.rust-cache.outputs.cache-key }} # dummy – see Job #2 note
+          # pin to a known‑good version (optional, keeps future changes predictable)
+          version: "0.4.4"
+          # NEW flag name (was --output-format)
+          args: "--format=github ."
 
-# ────────────────────────────────────────────────────────────────────────
-# 2.  Build & push image  (only if   needs: lint   succeeded)
-# ────────────────────────────────────────────────────────────────────────
-  build:
-    needs: lint
+###############################################################################
+# 2️⃣  Build the Docker image and push to GHCR
+###############################################################################
+  build-and-deploy:
+    name: Build & Deploy
+    needs: lint          # ⬅️  only run if Ruff passed
     runs-on: ubuntu-latest
-    permissions:
-      packages: write      # needed for GHCR push with GITHUB_TOKEN
-      contents: read
+
     steps:
-      - uses: actions/checkout@v4
+    ##########################################################################
+    # 2.1  Checkout code
+    ##########################################################################
+    - name: Checkout
+      uses: actions/checkout@v3
 
-      - name: Set up QEMU (cross‑build)
-        uses: docker/setup-qemu-action@v2
-        with:
-          platforms: linux/amd64,linux/arm64
+    ##########################################################################
+    # 2.2  Set up QEMU + Buildx (multi‑arch, cache‑aware builds)
+    ##########################################################################
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v2
 
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v2
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
 
-      - name: Build & push (GHCR)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push:   true
-          tags: |
-            ghcr.io/jorgeavlobo/clinicafisina-telegram-bot:latest
-            ghcr.io/jorgeavlobo/clinicafisina-telegram-bot:${{ github.sha }}
-          cache-from: type=gha
-          cache-to:   type=gha,mode=max
+    ##########################################################################
+    # 2.3  Log in to GitHub Container Registry
+    ##########################################################################
+    - name: Login to GHCR
+      uses: docker/login-action@v2
+      with:
+        registry: ghcr.io
+        username: ${{ secrets.GHCR_USERNAME }}
+        password: ${{ secrets.GHCR_PAT }}
 
-# ────────────────────────────────────────────────────────────────────────
-# 3.  SSH deploy  (runs only if image build succeeded)
-# ────────────────────────────────────────────────────────────────────────
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.0
-        with:
-          host:       ${{ secrets.OVH_VPS_HOST }}
-          username:   ${{ secrets.OVH_VPS_USERNAME }}
-          key:        ${{ secrets.OVH_VPS_SSH_PRIVATE_KEY }}
-          port:       42922
-          script: |
-            set -Eeuo pipefail
-            trap 'rm -f ~/.ssh/github_actions_key || true' EXIT
+    ##########################################################################
+    # 2.4  Build & push with caching
+    ##########################################################################
+    - name: Build and push image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: |
+          ghcr.io/jorgeavlobo/clinicafisina-telegram-bot:latest
+          ghcr.io/jorgeavlobo/clinicafisina-telegram-bot:${{ github.sha }}
+        cache-from: type=registry,ref=ghcr.io/jorgeavlobo/clinicafisina-telegram-bot:cache
+        cache-to: type=registry,ref=ghcr.io/jorgeavlobo/clinicafisina-telegram-bot:cache,mode=max
 
-            PROJECT_DIR=/opt/clinicafisina_telegram_bot
-            IMAGE=ghcr.io/jorgeavlobo/clinicafisina-telegram-bot:latest
+    ##########################################################################
+    # 2.5  SSH into the VPS and (re)start the stack
+    ##########################################################################
+    - name: Deploy via SSH
+      uses: appleboy/ssh-action@master
+      with:
+        host:       ${{ secrets.OVH_VPS_HOST }}
+        username:   ${{ secrets.OVH_VPS_USERNAME }}
+        key:        ${{ secrets.OVH_VPS_SSH_PRIVATE_KEY }}
+        passphrase: ${{ secrets.OVH_VPS_SSH_PASSPHRASE }}
+        port:       42922
+        script: |
+          set -Eeuo pipefail
+          PROJECT_DIR=/opt/clinicafisina_telegram_bot
+          GIT_REPO=git@github.com:jorgeavlobo/clinicafisina-telegram-bot.git
 
-            echo "► ensuring project dir exists"
-            sudo mkdir -p "$PROJECT_DIR"
-            sudo chown $USER:$USER "$PROJECT_DIR"
-            cd "$PROJECT_DIR"
+          echo "▶ ensuring ${PROJECT_DIR}"
+          sudo mkdir -p "$PROJECT_DIR"
+          sudo chown "$USER":"$USER" "$PROJECT_DIR"
+          cd "$PROJECT_DIR"
 
-            echo "► pulling latest docker‑compose file"
-            if [ ! -d .git ]; then
-              git clone --depth=1 git@github.com:jorgeavlobo/clinicafisina-telegram-bot.git .
-            else
-              git fetch --all
-              git reset --hard origin/main
-              git clean -fd
-            fi
+          echo "▶ updating code"
+          if [ ! -d .git ]; then
+            git clone --depth=1 "$GIT_REPO" .
+          else
+            git fetch --all
+            git reset --hard origin/main
+            git clean -fd
+          fi
 
-            echo "► docker login GHCR with short‑lived token"
-            echo "${{ github.token }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "▶ docker‑compose pull / up"
+          echo "${{ secrets.GHCR_PAT }}" | \
+            docker login ghcr.io -u ${{ secrets.GHCR_USERNAME }} --password-stdin
+          docker compose pull
+          docker compose up -d
 
-            echo "► pulling updated image layers"
-            docker compose pull
+          echo "▶ containers running:"
+          docker compose ps
 
-            echo "► recreating container"
-            docker compose up -d
-
-            echo "► done."
+# END OF FILE
