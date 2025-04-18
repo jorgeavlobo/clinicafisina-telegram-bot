@@ -1,19 +1,29 @@
 """
-main.py — entry‑point for aiogram v3 bot (Redis FSM + PostgreSQL logging)
-with granular error logging.
+main.py — entry‑point for the Clínica Fisina Telegram bot
+(aiogram v3, Redis FSM, PostgreSQL async logging).
+
+Key features
+------------
+• All logs ≥INFO go to the `clinicafisina_telegram_bot` table via
+  `infra.db_logger.PGHandler` (errors also go to stderr/console).
+• Granular error reporting: any un‑handled exception inside a handler
+  is captured by `LogErrorsMiddleware` and written to DB with
+  `telegram_user_id` + `chat_id`.
+• Redis storage (24 h TTL) and PostgreSQL connection pools initialised
+  on startup, closed gracefully on shutdown.
 """
 
 import asyncio
 import logging
 import os
 from functools import wraps
-from typing import Callable, Coroutine, Any
+from typing import Any, Callable, Coroutine
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
-from aiogram.dispatcher.middlewares.error import ErrorMiddleware
+from aiogram.dispatcher.middlewares.errors import ErrorsMiddleware
 from redis.asyncio import Redis
 from dotenv import load_dotenv
 
@@ -21,7 +31,7 @@ from infra.db_async import DBPools
 from infra.db_logger import pg_handler
 
 # --------------------------------------------------------------------------- #
-#  ENV
+#  Environment
 # --------------------------------------------------------------------------- #
 load_dotenv()
 
@@ -32,21 +42,18 @@ REDIS_DB     = int(os.getenv("REDIS_DB", 0))
 REDIS_PREFIX = os.getenv("REDIS_PREFIX", "fsm")
 
 # --------------------------------------------------------------------------- #
-#  LOGGING
+#  Logging
 # --------------------------------------------------------------------------- #
 logging.basicConfig(
     level=logging.INFO,
-    handlers=[pg_handler, logging.StreamHandler()]
+    handlers=[pg_handler, logging.StreamHandler()]   # DB + console
 )
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
-#  Helper decorator to standardise error logging
+#  Helper decorator — log + re‑raise during startup steps
 # --------------------------------------------------------------------------- #
 def log_and_reraise(step: str) -> Callable[[Callable[..., Coroutine]], Callable[..., Coroutine]]:
-    """
-    Decorator: log exception with context `step` and re‑raise.
-    """
     def decorator(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -62,7 +69,7 @@ def log_and_reraise(step: str) -> Callable[[Callable[..., Coroutine]], Callable[
     return decorator
 
 # --------------------------------------------------------------------------- #
-#  Init sections wrapped with logging
+#  Startup helpers
 # --------------------------------------------------------------------------- #
 @log_and_reraise("DB pool init")
 async def init_db_pools() -> None:
@@ -91,25 +98,20 @@ async def init_bot() -> Bot:
     return bot
 
 # --------------------------------------------------------------------------- #
-#  Error middleware to log every handler exception with user / chat ids
+#  Errors middleware
 # --------------------------------------------------------------------------- #
-class LogErrorsMiddleware(ErrorMiddleware):
-    async def on_error(
-        self,
-        event,
-        error: Exception,
-        data: dict[str, Any],
-    ) -> None:
-        # attempt to extract IDs
-        telegram_uid = None
-        chat_id = None
+class LogErrorsMiddleware(ErrorsMiddleware):
+    """Capture every unhandled exception raised by a handler."""
 
-        if hasattr(event, "from_user"):
-            telegram_uid = event.from_user.id
-        if hasattr(event, "chat"):
-            chat_id = event.chat.id
-        elif hasattr(event, "message") and event.message:
-            chat_id = event.message.chat.id
+    async def notify(self, update, exception):
+        telegram_uid = getattr(update, "from_user", None)
+        telegram_uid = telegram_uid.id if telegram_uid else None
+
+        chat_id = None
+        if hasattr(update, "chat") and update.chat:
+            chat_id = update.chat.id
+        elif hasattr(update, "message") and update.message:
+            chat_id = update.message.chat.id
 
         logger.exception(
             "Unhandled exception inside handler",
@@ -119,6 +121,7 @@ class LogErrorsMiddleware(ErrorMiddleware):
                 "is_system": False,
             }
         )
+        return True        # continue default error processing
 
 # --------------------------------------------------------------------------- #
 #  Routers
@@ -150,10 +153,8 @@ async def main() -> None:
     bot     = await init_bot()
 
     dispatcher = Dispatcher(storage=storage)
-    dispatcher.message.middleware(LogErrorsMiddleware())
-    dispatcher.callback_query.middleware(LogErrorsMiddleware())
+    dispatcher.errors.middleware(LogErrorsMiddleware())
 
-    # router registration
     for r in ROUTERS:
         try:
             dispatcher.include_router(r)
@@ -169,6 +170,7 @@ async def main() -> None:
             raise
 
     logger.info("🚀 Starting polling", extra={"is_system": True})
+
     try:
         await dispatcher.start_polling(bot)
     finally:
