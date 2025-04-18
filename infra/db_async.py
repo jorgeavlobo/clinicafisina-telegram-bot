@@ -1,38 +1,34 @@
-# infra/db_async.py
-import os
-import asyncpg
-from dotenv import load_dotenv
+# infra/db_async.py  – only two tiny additions  ❰❰❰
 
+import os, asyncpg
+from dotenv import load_dotenv
 load_dotenv()
 
-DB_HOST        = os.getenv("DB_HOST", "localhost")
-DB_PORT        = int(os.getenv("DB_PORT", 5432))
-DB_USER        = os.getenv("DB_USER")
-DB_PASSWORD    = os.getenv("DB_PASSWORD")
-DB_NAME_FISINA = os.getenv("DB_NAME_FISINA", "fisina")
-DB_NAME_LOGS   = os.getenv("DB_NAME_LOGS", "logs")
+DB_KW = dict(
+    host=os.getenv("DB_HOST", "localhost"),
+    port=int(os.getenv("DB_PORT", 5432)),
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD"),
+    # ← THIS is the whole fix:
+    ssl=False if os.getenv("DB_SSLMODE", "disable") == "disable" else None,
+    timeout=float(os.getenv("DB_CONNECT_TIMEOUT", 10)),   # seconds
+    min_size=1, max_size=5,
+)
 
 class DBPools:
-    """Singleton containers for asyncpg pools."""
     pool_fisina: asyncpg.Pool | None = None
     pool_logs:   asyncpg.Pool | None = None
 
     @classmethod
     async def init(cls) -> None:
         cls.pool_fisina = await asyncpg.create_pool(
-            host=DB_HOST, port=DB_PORT, user=DB_USER,
-            password=DB_PASSWORD, database=DB_NAME_FISINA,
-            min_size=1, max_size=5,
+            **DB_KW, database=os.getenv("DB_NAME_FISINA", "fisina")
         )
         cls.pool_logs = await asyncpg.create_pool(
-            host=DB_HOST, port=DB_PORT, user=DB_USER,
-            password=DB_PASSWORD, database=DB_NAME_LOGS,
-            min_size=1, max_size=5,
+            **DB_KW, database=os.getenv("DB_NAME_LOGS", "logs")
         )
 
     @classmethod
     async def close(cls) -> None:
-        if cls.pool_fisina:
-            await cls.pool_fisina.close()
-        if cls.pool_logs:
-            await cls.pool_logs.close()
+        if cls.pool_fisina: await cls.pool_fisina.close()
+        if cls.pool_logs:   await cls.pool_logs.close()
