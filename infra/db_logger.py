@@ -1,13 +1,7 @@
 # infra/db_logger.py
 """
-Logging.Handler that writes every record ≥INFO to the
-`clinicafisina_telegram_bot` table in the `logs` database.
-
-A single instance (`pg_handler`) is imported and added to the root logger
-in main.py.
-
-The handler is **non‑blocking**: emit() schedules the INSERT with
-`asyncio.create_task`, so the event‑loop never waits on I/O.
+Asynchronous logging handler that writes every record ≥INFO to the
+`clinicafisina_telegram_bot` table in the *logs* database.
 """
 
 from __future__ import annotations
@@ -24,48 +18,50 @@ INSERT INTO clinicafisina_telegram_bot
 VALUES ($1,    $2,               $3,      $4,        $5)
 """
 
-_LOG = logging.getLogger(__name__)     # local fallback
+_LOG = logging.getLogger(__name__)
 
 
 class PGHandler(logging.Handler):
-    """Asynchronous PostgreSQL log handler."""
+    """
+    Non‑blocking PostgreSQL log handler.
+    While the application is still starting, the pools are not available;
+    we silently drop those early records after logging *one* warning.
+    """
 
-    def emit(self, record: logging.LogRecord) -> None:  # noqa: D401
-        # get the current running loop – skip if we are in a non‑async
+    _warned_no_pool = False   # class‑wide flag: warn only once
+
+    # ------------------------------------------------------------------ #
+    def emit(self, record: logging.LogRecord) -> None:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
+            return  # outside of an event‑loop (module import) → skip
+
+        # pools not ready yet?  drop record, warn once, and move on
+        if DBPools.pool_logs is None:
+            if not PGHandler._warned_no_pool:
+                _LOG.warning("DB pools not yet initialised – "
+                             "log records will be dropped temporarily")
+                PGHandler._warned_no_pool = True
             return
 
-        # extract extra fields safely
         telegram_uid: Any = getattr(record, "telegram_user_id", None)
         chat_id:      Any = getattr(record, "chat_id", None)
         is_system:    bool = bool(getattr(record, "is_system", False))
 
-        # format AFTER we pull the extra attrs, otherwise they may be lost
-        msg:   str  = self.format(record)
-        level: str  = record.levelname
+        msg   = self.format(record)
+        level = record.levelname
 
-        # coro that does the actual INSERT
         async def _write() -> None:
             try:
-                if DBPools.pool_logs is None:
-                    raise RuntimeError("pool_logs is None (startup failure)")
-
                 async with DBPools.pool_logs.acquire() as conn:
                     await conn.execute(
                         _INSERT_SQL,
-                        level,
-                        telegram_uid,
-                        chat_id,
-                        is_system,
-                        msg,
+                        level, telegram_uid, chat_id, is_system, msg,
                     )
-            except Exception as exc:   # pylint: disable=broad-except
-                # last‑chance fallback to stderr
+            except Exception as exc:                       # noqa: BLE001
                 _LOG.error("Failed to write log to DB: %s", exc, exc_info=True)
 
-        # schedule without awaiting
         loop.create_task(_write())
 
 
