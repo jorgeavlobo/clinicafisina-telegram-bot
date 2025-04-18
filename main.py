@@ -1,6 +1,6 @@
 """
-main.py  –  entry point for aiogram v3 bot with Redis FSM
-           and PostgreSQL logging.
+main.py – entry point for aiogram v3 bot with Redis FSM
+          and PostgreSQL logging.
 """
 
 import os
@@ -14,26 +14,26 @@ from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
 from redis.asyncio import Redis
 from dotenv import load_dotenv
 
-from infra.db_async import DBPools          # NEW
-from infra.db_logger import pg_handler      # NEW
+from infra.db_async import DBPools            # DB connection pools
+from infra.db_logger import pg_handler        # PostgreSQL logging handler
 
 # --------------------------------------------------------------------------- #
 #  Environment
 # --------------------------------------------------------------------------- #
 load_dotenv()
 
-BOT_TOKEN    = os.getenv("TELEGRAM_TOKEN")          # ← keep existing env name
+BOT_TOKEN    = os.getenv("TELEGRAM_TOKEN")
 REDIS_HOST   = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT   = int(os.getenv("REDIS_PORT", 6379))
 REDIS_DB     = int(os.getenv("REDIS_DB", 0))
 REDIS_PREFIX = os.getenv("REDIS_PREFIX", "fsm")
 
 # --------------------------------------------------------------------------- #
-#  Logging: send everything ≥INFO to PostgreSQL, errors still reach stderr
+#  Logging
 # --------------------------------------------------------------------------- #
 logging.basicConfig(
     level=logging.INFO,
-    handlers=[pg_handler, logging.StreamHandler()]   # keep console for errors
+    handlers=[pg_handler, logging.StreamHandler()]  # DB + console
 )
 
 # --------------------------------------------------------------------------- #
@@ -78,7 +78,6 @@ for r in (
 #  Startup / shutdown
 # --------------------------------------------------------------------------- #
 async def main() -> None:
-    # DB pools
     await DBPools.init()
     logging.info("Starting bot…")
 
