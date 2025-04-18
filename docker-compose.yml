@@ -2,18 +2,10 @@ services:
   bot:
     image: ghcr.io/jorgeavlobo/clinicafisina-telegram-bot:latest
     container_name: clinicafisina_telegram_bot
-
-    # Make the host reachable as host.docker.internal (Linux)
+    env_file: .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
-
-    # load everything from .env instead of repeating it here
-    env_file: .env
-
-    # you may keep explicit overrides here if you ever need them, e.g.:
-    # environment:
-    #   DB_CONNECT_TIMEOUT: 5
-
+    restart: unless-stopped
     networks:
       - redis_net
 
