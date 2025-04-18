@@ -1,6 +1,6 @@
 """
 Asynchronous logging.Handler that writes every log ≥INFO to PostgreSQL.
-Falls back to stderr if the pool is not ready (e.g. startup failure).
+Falls back to stderr if the pool is not ready (startup failure).
 """
 
 import asyncio
@@ -20,16 +20,13 @@ class PGHandler(logging.Handler):
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            # Not inside an event‑loop (e.g. gunicorn preload)
             return
 
-        # ----------- extract structured fields ------------------------ #
         telegram_uid: Any = getattr(record, "telegram_user_id", None)
         chat_id: Any      = getattr(record, "chat_id", None)
         is_system: bool   = bool(getattr(record, "is_system", False))
         msg: str          = self.format(record)
         level: str        = record.levelname
-        # -------------------------------------------------------------- #
 
         async def _write() -> None:
             try:
@@ -39,23 +36,16 @@ class PGHandler(logging.Handler):
                 async with DBPools.pool_logs.acquire() as conn:
                     await conn.execute(
                         INSERT_SQL,
-                        level,
-                        telegram_uid,
-                        chat_id,
-                        is_system,
-                        msg,
+                        level, telegram_uid, chat_id, is_system, msg
                     )
             except Exception as e:
-                # Fallback to stderr so the error is visible
                 logging.getLogger(__name__).error(
                     "Failed to write log to DB: %s", e, exc_info=True
                 )
 
         loop.create_task(_write())
 
-# -------------------------------------------------------------------- #
-#  Singleton handler instance
-# -------------------------------------------------------------------- #
+# singleton
 pg_handler = PGHandler()
 pg_handler.setLevel(logging.INFO)
 pg_handler.setFormatter(
