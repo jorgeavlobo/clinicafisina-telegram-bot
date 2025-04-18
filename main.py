@@ -1,16 +1,6 @@
 """
 main.py — entry‑point for the Clínica Fisina Telegram bot
-(aiogram v3, Redis FSM, PostgreSQL async logging).
-
-Key features
-------------
-• All logs ≥INFO go to the `clinicafisina_telegram_bot` table via
-  `infra.db_logger.PGHandler` (errors also go to stderr/console).
-• Granular error reporting: any un‑handled exception inside a handler
-  is captured by `LogErrorsMiddleware` and written to DB with
-  `telegram_user_id` + `chat_id`.
-• Redis storage (24 h TTL) and PostgreSQL connection pools initialised
-  on startup, closed gracefully on shutdown.
+(aiogram v3, Redis FSM, PostgreSQL logging) with custom error middleware.
 """
 
 import asyncio
@@ -23,7 +13,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
-from aiogram.dispatcher.middlewares.errors import ErrorsMiddleware
+from aiogram.dispatcher.middlewares.base import BaseMiddleware
 from redis.asyncio import Redis
 from dotenv import load_dotenv
 
@@ -46,7 +36,7 @@ REDIS_PREFIX = os.getenv("REDIS_PREFIX", "fsm")
 # --------------------------------------------------------------------------- #
 logging.basicConfig(
     level=logging.INFO,
-    handlers=[pg_handler, logging.StreamHandler()]   # DB + console
+    handlers=[pg_handler, logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
@@ -98,30 +88,31 @@ async def init_bot() -> Bot:
     return bot
 
 # --------------------------------------------------------------------------- #
-#  Errors middleware
+#  Custom error‑logging middleware
 # --------------------------------------------------------------------------- #
-class LogErrorsMiddleware(ErrorsMiddleware):
-    """Capture every unhandled exception raised by a handler."""
+class LogErrorsMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        try:
+            return await handler(event, data)
+        except Exception:
+            telegram_uid = getattr(event, "from_user", None)
+            telegram_uid = telegram_uid.id if telegram_uid else None
 
-    async def notify(self, update, exception):
-        telegram_uid = getattr(update, "from_user", None)
-        telegram_uid = telegram_uid.id if telegram_uid else None
+            chat_id = None
+            if hasattr(event, "chat") and event.chat:
+                chat_id = event.chat.id
+            elif hasattr(event, "message") and event.message:
+                chat_id = event.message.chat.id
 
-        chat_id = None
-        if hasattr(update, "chat") and update.chat:
-            chat_id = update.chat.id
-        elif hasattr(update, "message") and update.message:
-            chat_id = update.message.chat.id
-
-        logger.exception(
-            "Unhandled exception inside handler",
-            extra={
-                "telegram_user_id": telegram_uid,
-                "chat_id": chat_id,
-                "is_system": False,
-            }
-        )
-        return True        # continue default error processing
+            logger.exception(
+                "Unhandled exception inside handler",
+                extra={
+                    "telegram_user_id": telegram_uid,
+                    "chat_id": chat_id,
+                    "is_system": False,
+                }
+            )
+            raise  # let aiogram continue default error processing
 
 # --------------------------------------------------------------------------- #
 #  Routers
@@ -153,8 +144,11 @@ async def main() -> None:
     bot     = await init_bot()
 
     dispatcher = Dispatcher(storage=storage)
-    dispatcher.errors.middleware(LogErrorsMiddleware())
+    # attach error‑logging middleware
+    dispatcher.message.middleware(LogErrorsMiddleware())
+    dispatcher.callback_query.middleware(LogErrorsMiddleware())
 
+    # register routers
     for r in ROUTERS:
         try:
             dispatcher.include_router(r)
@@ -170,7 +164,6 @@ async def main() -> None:
             raise
 
     logger.info("🚀 Starting polling", extra={"is_system": True})
-
     try:
         await dispatcher.start_polling(bot)
     finally:
