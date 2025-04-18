@@ -1,75 +1,67 @@
 # infra/db_logger.py
-"""
-Asynchronous logging handler that writes every record ≥INFO to the
-`clinicafisina_telegram_bot` table in the *logs* database.
-"""
-
-from __future__ import annotations
-
 import asyncio
 import logging
+import sys
 from typing import Any
 
 from infra.db_async import DBPools
 
 _INSERT_SQL = """
 INSERT INTO clinicafisina_telegram_bot
-       (level, telegram_user_id, chat_id, is_system, message)
-VALUES ($1,    $2,               $3,      $4,        $5)
+    (level, telegram_user_id, chat_id, is_system, message)
+VALUES ($1,  $2,               $3,      $4,        $5)
 """
-
-_LOG = logging.getLogger(__name__)
-
 
 class PGHandler(logging.Handler):
     """
-    Non‑blocking PostgreSQL log handler.
-    While the application is still starting, the pools are not available;
-    we silently drop those early records after logging *one* warning.
+    Asynchronous logging handler that writes records to PostgreSQL.
+    Falls back to stderr until the DB pools are ready, and if any
+    write fails later on.
     """
 
-    _warned_no_pool = False   # class‑wide flag: warn only once
-
-    # ------------------------------------------------------------------ #
     def emit(self, record: logging.LogRecord) -> None:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return  # outside of an event‑loop (module import) → skip
+        # Always format first (safer – no risk of late eval inside async task)
+        formatted: str = self.format(record)
 
-        # pools not ready yet?  drop record, warn once, and move on
+        # ─────────────── fallback BEFORE pools are ready ────────────────
         if DBPools.pool_logs is None:
-            if not PGHandler._warned_no_pool:
-                _LOG.warning("DB pools not yet initialised – "
-                             "log records will be dropped temporarily")
-                PGHandler._warned_no_pool = True
+            print(formatted, file=sys.stderr)
             return
 
+        # Extract structured extras (optional fields)
         telegram_uid: Any = getattr(record, "telegram_user_id", None)
         chat_id:      Any = getattr(record, "chat_id", None)
         is_system:    bool = bool(getattr(record, "is_system", False))
-
-        msg   = self.format(record)
-        level = record.levelname
+        level:        str  = record.levelname
 
         async def _write() -> None:
             try:
                 async with DBPools.pool_logs.acquire() as conn:
                     await conn.execute(
                         _INSERT_SQL,
-                        level, telegram_uid, chat_id, is_system, msg,
+                        level,
+                        telegram_uid,
+                        chat_id,
+                        is_system,
+                        formatted,
                     )
-            except Exception as exc:                       # noqa: BLE001
-                _LOG.error("Failed to write log to DB: %s", exc, exc_info=True)
+            except Exception as exc:
+                # FINAL fallback – never re‑enter logging!
+                print(f"PGHandler error: {exc}\n{formatted}", file=sys.stderr)
 
-        loop.create_task(_write())
+        # Schedule without blocking the running event‑loop
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_write())
+        except RuntimeError:
+            # Not inside an event‑loop (e.g. during gunicorn preload)
+            print(formatted, file=sys.stderr)
 
-
-# --------------------------------------------------------------------------- #
-#  Singleton instance plugged into the root logger by main.py
-# --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------- #
+#  Singleton handler instance
+# --------------------------------------------------------------------- #
 pg_handler = PGHandler()
 pg_handler.setLevel(logging.INFO)
 pg_handler.setFormatter(
-    logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
+    logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 )
