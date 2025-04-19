@@ -8,10 +8,17 @@ from handlers.option1 import _close_inline  # reuse
 
 router = Router()
 
-# ---------- Option 4 inline submenu ----------
-
 @router.callback_query(MenuStates.main, F.data == "opt4")
 async def enter_option4(cb: CallbackQuery, state: FSMContext):
+    # 🔒 stale-menu guard
+    data = await state.get_data()
+    if cb.message.message_id != data.get("menu_msg_id"):
+        await cb.answer(
+            "This menu is outdated. Please send /start again.",
+            show_alert=True
+        )
+        return
+
     await state.set_state(MenuStates.option4)
 
     kb = InlineKeyboardBuilder()
@@ -22,17 +29,11 @@ async def enter_option4(cb: CallbackQuery, state: FSMContext):
     await cb.message.edit_text("Option 4 menu:", reply_markup=kb.as_markup())
     await cb.answer()
 
-
-# ---------- 4.1 (final) ----------
-
 @router.callback_query(MenuStates.option4, F.data == "4.1")
 async def option4_1(cb: CallbackQuery, state: FSMContext):
     await _close_inline(cb, "You selected sub-option 4.1")
     await state.clear()
     await cb.answer()
-
-
-# ---------- 4.2 → inline submenu ----------
 
 @router.callback_query(MenuStates.option4, F.data == "4.2")
 async def option4_2(cb: CallbackQuery, state: FSMContext):
@@ -47,17 +48,11 @@ async def option4_2(cb: CallbackQuery, state: FSMContext):
     await cb.message.edit_text("Sub‑option 4.2 menu:", reply_markup=kb.as_markup())
     await cb.answer()
 
-
-# ---------- 4.2.x (final) ----------
-
 @router.callback_query(MenuStates.option42, F.data.regexp(r"^4\.2\.[1-3]$"))
 async def option42_final(cb: CallbackQuery, state: FSMContext):
     await _close_inline(cb, f"You selected {cb.data}")
     await state.clear()
     await cb.answer()
-
-
-# ---------- Back from 4.2 submenu ----------
 
 @router.callback_query(MenuStates.option42, F.data == "back42")
 async def option42_back(cb: CallbackQuery, state: FSMContext):
@@ -71,9 +66,6 @@ async def option42_back(cb: CallbackQuery, state: FSMContext):
 
     await cb.message.edit_text("Option 4 menu:", reply_markup=kb.as_markup())
     await cb.answer()
-
-
-# ---------- Back from Option 4 to main ----------
 
 @router.callback_query(MenuStates.option4, F.data.startswith("back"))
 async def option4_back(cb: CallbackQuery, state: FSMContext):
