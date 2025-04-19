@@ -1,3 +1,4 @@
+version: "3.9"
 services:
   bot:
     image: ghcr.io/jorgeavlobo/clinicafisina-telegram-bot:latest
@@ -8,6 +9,13 @@ services:
     restart: unless-stopped
     networks:
       - redis_net
+    ports:
+      # bind only on localhost so Nginx can proxy to it,
+      # but it's not exposed publicly
+      - "127.0.0.1:8443:8443"
+    environment:
+      # ensure DOMAIN matches your DNS + cert
+      DOMAIN: telegram.fisina.pt
 
 networks:
   redis_net:
