@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
 """
 main.py — entry‑point for the Clínica Fisina Telegram bot
 (aiogram v3, Redis FSM, PostgreSQL logging) with custom error middleware.
-Now runs in webhook mode on port 8443 behind Nginx.
+Runs in webhook mode on port 8443 behind Nginx.
 """
 
 import asyncio
@@ -18,35 +17,29 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from redis.asyncio import Redis
 from dotenv import load_dotenv
+from redis.asyncio import Redis
 
 from infra.db_async import DBPools
 from infra.db_logger import pg_handler
 
-# ────────────────────────────────────────────────────────────────────────── #
-#  Environment
-# ────────────────────────────────────────────────────────────────────────── #
+# ─── Environment ────────────────────────────────────────────────────────────
 load_dotenv()
 BOT_TOKEN    = os.getenv("TELEGRAM_TOKEN")
 REDIS_HOST   = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT   = int(os.getenv("REDIS_PORT", 6379))
 REDIS_DB     = int(os.getenv("REDIS_DB", 0))
 REDIS_PREFIX = os.getenv("REDIS_PREFIX", "fsm")
-DOMAIN       = os.getenv("DOMAIN", "telegram.fisina.pt")  # used for webhook URL
+DOMAIN       = os.getenv("DOMAIN", "telegram.fisina.pt")  # for webhook URL
 
-# ────────────────────────────────────────────────────────────────────────── #
-#  Logging
-# ────────────────────────────────────────────────────────────────────────── #
+# ─── Logging ────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     handlers=[pg_handler, logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
-# ────────────────────────────────────────────────────────────────────────── #
-#  Helper decorator — log + re‑raise during startup steps
-# ────────────────────────────────────────────────────────────────────────── #
+# ─── Helper decorator — log + re‑raise during startup steps ─────────────────
 def log_and_reraise(step: str) -> Callable[[Callable[..., Coroutine]], Callable[..., Coroutine]]:
     def decorator(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
         @wraps(func)
@@ -59,9 +52,7 @@ def log_and_reraise(step: str) -> Callable[[Callable[..., Coroutine]], Callable[
         return wrapper
     return decorator
 
-# ────────────────────────────────────────────────────────────────────────── #
-#  Startup helpers
-# ────────────────────────────────────────────────────────────────────────── #
+# ─── Startup helpers ───────────────────────────────────────────────────────
 @log_and_reraise("DB pool init")
 async def init_db_pools() -> None:
     await DBPools.init()
@@ -88,9 +79,7 @@ async def init_bot() -> Bot:
     logger.info("✅ Bot instance created", extra={"is_system": True})
     return bot
 
-# ────────────────────────────────────────────────────────────────────────── #
-#  Custom error‑logging middleware
-# ────────────────────────────────────────────────────────────────────────── #
+# ─── Custom error‑logging middleware ────────────────────────────────────────
 class LogErrorsMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         try:
@@ -114,9 +103,7 @@ class LogErrorsMiddleware(BaseMiddleware):
             )
             raise
 
-# ────────────────────────────────────────────────────────────────────────── #
-#  Routers
-# ────────────────────────────────────────────────────────────────────────── #
+# ─── Routers ────────────────────────────────────────────────────────────────
 from handlers import (
     main_menu,
     option1,
@@ -125,7 +112,6 @@ from handlers import (
     option4,
     basic_cmds,
 )
-
 ROUTERS = (
     main_menu.router,
     option1.router,
@@ -135,57 +121,56 @@ ROUTERS = (
     basic_cmds.router,
 )
 
-# ────────────────────────────────────────────────────────────────────────── #
-#  Build aiohttp application for webhook
-# ────────────────────────────────────────────────────────────────────────── #
+# ─── Build the aiohttp application ──────────────────────────────────────────
 async def build_app() -> web.Application:
-    # initialize dependencies
+    # Initialize infra
     await init_db_pools()
     storage = await init_storage()
     bot     = await init_bot()
 
-    # create dispatcher and attach middleware
-    dp = Dispatcher(storage=storage)
-    dp.message.middleware(LogErrorsMiddleware())
-    dp.callback_query.middleware(LogErrorsMiddleware())
+    # Dispatcher + middleware
+    dispatcher = Dispatcher(storage=storage)
+    dispatcher.message.middleware(LogErrorsMiddleware())
+    dispatcher.callback_query.middleware(LogErrorsMiddleware())
 
-    # register routers
+    # Register your routers
     for r in ROUTERS:
         try:
-            dp.include_router(r)
+            dispatcher.include_router(r)
             logger.info(f"✅ Router registered: {r.__module__}", extra={"is_system": True})
         except Exception:
             logger.exception(f"❌ Failed to register router {r}", extra={"is_system": True})
             raise
 
-    # set webhook URL
+    # Set the webhook
     webhook_path = f"/{BOT_TOKEN}"
     webhook_url  = f"https://{DOMAIN}{webhook_path}"
-    await bot.delete_webhook(drop_pending_updates=True)
     await bot.set_webhook(webhook_url)
     logger.info(f"✅ Webhook set to {webhook_url}", extra={"is_system": True})
 
-    # build aiohttp app and attach Telegram request handler
+    # Create aiohttp app, wire aiogram startup/shutdown hooks
     app = web.Application()
-    SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=webhook_path)
-    setup_application(app)
+    setup_application(app, dispatcher)
 
-    # graceful shutdown tasks
+    # Register Telegram → dispatcher request handler
+    SimpleRequestHandler(
+        dispatcher=dispatcher,
+        bot=bot,
+        secret_token=None,      # or set your own secret‑token header here
+    ).register(app, path=webhook_path)
+
+    # Clean up DB pools on shutdown
     async def on_shutdown(app: web.Application):
-        logger.info("👋 Shutting down webhook server", extra={"is_system": True})
         await DBPools.close()
-        await bot.session.close()
-        logger.info("👋 Bot shutdown complete", extra={"is_system": True})
+        logger.info("👋 Bot shutdown", extra={"is_system": True})
     app.on_shutdown.append(on_shutdown)
 
+    logger.info("🚀 Webhook server ready", extra={"is_system": True})
     return app
 
-# ────────────────────────────────────────────────────────────────────────── #
-#  Entrypoint
-# ────────────────────────────────────────────────────────────────────────── #
+# ─── Entrypoint ─────────────────────────────────────────────────────────────
 def main() -> None:
     app = asyncio.run(build_app())
-    logger.info("🚀 Starting webhook server on 0.0.0.0:8443", extra={"is_system": True})
     web.run_app(app, host="0.0.0.0", port=8443)
 
 if __name__ == "__main__":
