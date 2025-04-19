@@ -6,15 +6,13 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+
+    # <<< change host port to 8444
+    ports:
+      - "127.0.0.1:8444:8443"
+
     networks:
       - redis_net
-    ports:
-      # bind only on localhost so Nginx can proxy to it,
-      # but it's not exposed publicly
-      - "127.0.0.1:8443:8443"
-    environment:
-      # ensure DOMAIN matches your DNS + cert
-      DOMAIN: telegram.fisina.pt
 
 networks:
   redis_net:
