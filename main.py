@@ -16,7 +16,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler
 from dotenv import load_dotenv
 from redis.asyncio import Redis
 
@@ -139,7 +139,6 @@ async def on_startup(app: web.Application):
     # 3) webhook
     path = f"/{BOT_TOKEN}"
     url  = f"https://{DOMAIN}{path}"
-    # drop any old updates
     await bot.delete_webhook(drop_pending_updates=True)
     await bot.set_webhook(url)
     logger.info(f"✅ Webhook set to {url}", extra={"is_system": True})
@@ -148,10 +147,8 @@ async def on_startup(app: web.Application):
     app["bot"]        = bot
     app["dispatcher"] = dispatcher
 
-    # 5) wire aiogram → aiohttp
-    setup_application(app, dispatcher)
+    # 5) register the aiohttp route
     SimpleRequestHandler(dispatcher=dispatcher, bot=bot).register(app, path=path)
-
     logger.info("🚀 Webhook server ready", extra={"is_system": True})
 
 async def on_shutdown(app: web.Application):
