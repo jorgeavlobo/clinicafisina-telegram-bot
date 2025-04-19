@@ -1,23 +1,26 @@
 #!/usr/bin/env python3
 """
 main.py — entry‑point for the Clínica Fisina Telegram bot
-(aiogram v3, Redis FSM, PostgreSQL logging) with custom error middleware.
-Now runs in webhook mode on port 8443 behind Nginx.
+(aiogram v3, Redis FSM, PostgreSQL logging) now running in webhook mode
+behind Nginx on port 8443 using an embedded aiohttp server.
 """
 
 import asyncio
 import logging
 import os
+import ssl
 from functools import wraps
 from typing import Any, Callable, Coroutine
 
+from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
-from redis.asyncio import Redis
+from aiogram.dispatcher.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
 from dotenv import load_dotenv
+from redis.asyncio import Redis
 
 from infra.db_async import DBPools
 from infra.db_logger import pg_handler
@@ -31,7 +34,7 @@ REDIS_HOST   = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT   = int(os.getenv("REDIS_PORT", 6379))
 REDIS_DB     = int(os.getenv("REDIS_DB", 0))
 REDIS_PREFIX = os.getenv("REDIS_PREFIX", "fsm")
-DOMAIN       = os.getenv("DOMAIN", "telegram.fisina.pt")  # used for webhook URL
+DOMAIN       = os.getenv("DOMAIN", "telegram.fisina.pt")
 
 # ────────────────────────────────────────────────────────────────────────── #
 #  Logging
@@ -96,6 +99,7 @@ class LogErrorsMiddleware(BaseMiddleware):
         except Exception:
             telegram_uid = getattr(event, "from_user", None)
             telegram_uid = telegram_uid.id if telegram_uid else None
+
             chat_id = None
             if hasattr(event, "chat") and event.chat:
                 chat_id = event.chat.id
@@ -134,49 +138,59 @@ ROUTERS = (
 )
 
 # ────────────────────────────────────────────────────────────────────────── #
-#  Main coroutine (webhook mode)
+#  Build & return aiohttp application
 # ────────────────────────────────────────────────────────────────────────── #
-async def main() -> None:
+async def build_app() -> web.Application:
+    # initialize infra
     await init_db_pools()
     storage = await init_storage()
     bot     = await init_bot()
 
+    # prepare dispatcher
     dispatcher = Dispatcher(storage=storage)
     dispatcher.message.middleware(LogErrorsMiddleware())
     dispatcher.callback_query.middleware(LogErrorsMiddleware())
 
+    # register all routers
     for r in ROUTERS:
-        try:
-            dispatcher.include_router(r)
-            logger.info(f"✅ Router registered: {r.__module__}", extra={"is_system": True})
-        except Exception:
-            logger.exception(f"❌ Failed to register router {r}", extra={"is_system": True})
-            raise
+        dispatcher.include_router(r)
+        logger.info(f"✅ Router registered: {r.__module__}", extra={"is_system": True})
 
-    # ─── set webhook ──────────────────────────────────────────────────────
+    # set Telegram webhook
     webhook_path = f"/{BOT_TOKEN}"
     webhook_url  = f"https://{DOMAIN}{webhook_path}"
     await bot.set_webhook(webhook_url)
     logger.info(f"✅ Webhook set to {webhook_url}", extra={"is_system": True})
 
-    # ─── start webhook server ────────────────────────────────────────────
-    logger.info("🚀 Starting webhook server on 0.0.0.0:8443", extra={"is_system": True})
-    try:
-        await dispatcher.start_webhook(
-            listen="0.0.0.0",
-            port=8443,
-            webhook_path=webhook_path,
-            skip_updates=True,
-        )
-    finally:
+    # create aiohttp app and mount Telegram handler
+    app = web.Application()
+    handler = SimpleRequestHandler(dispatcher=dispatcher, bot=bot)
+    setup_application(app, handler, path=webhook_path)
+
+    # on shutdown, clean up DB and bot session
+    async def on_shutdown(app: web.Application):
         await DBPools.close()
         logger.info("👋 Bot shutdown", extra={"is_system": True})
+        await bot.session.close()
+
+    app.on_shutdown.append(on_shutdown)
+    return app
 
 # ────────────────────────────────────────────────────────────────────────── #
 #  Entrypoint
 # ────────────────────────────────────────────────────────────────────────── #
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Interrupted by user", extra={"is_system": True})
+    cert_path = f"/etc/letsencrypt/live/{DOMAIN}/fullchain.pem"
+    key_path  = f"/etc/letsencrypt/live/{DOMAIN}/privkey.pem"
+
+    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_context.load_cert_chain(cert_path, key_path)
+
+    logger.info("🚀 Starting webhook server on 0.0.0.0:8443", extra={"is_system": True})
+    app = asyncio.run(build_app())
+    web.run_app(
+        app,
+        host="0.0.0.0",
+        port=8443,
+        ssl_context=ssl_context,
+    )
