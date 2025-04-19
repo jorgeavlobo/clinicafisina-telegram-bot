@@ -1,10 +1,10 @@
+#!/usr/bin/env python3
 """
 main.py — entry‑point for the Clínica Fisina Telegram bot
 (aiogram v3, Redis FSM, PostgreSQL logging) with custom error middleware.
 Runs in webhook mode on port 8443 behind Nginx.
 """
 
-import asyncio
 import logging
 import os
 from functools import wraps
@@ -26,11 +26,11 @@ from infra.db_logger import pg_handler
 # ─── Environment ────────────────────────────────────────────────────────────
 load_dotenv()
 BOT_TOKEN    = os.getenv("TELEGRAM_TOKEN")
-REDIS_HOST   = os.getenv("REDIS_HOST", "localhost")
+REDIS_HOST   = os.getenv("REDIS_HOST",    "localhost")
 REDIS_PORT   = int(os.getenv("REDIS_PORT", 6379))
-REDIS_DB     = int(os.getenv("REDIS_DB", 0))
+REDIS_DB     = int(os.getenv("REDIS_DB",   0))
 REDIS_PREFIX = os.getenv("REDIS_PREFIX", "fsm")
-DOMAIN       = os.getenv("DOMAIN", "telegram.fisina.pt")  # for webhook URL
+DOMAIN       = os.getenv("DOMAIN",     "telegram.fisina.pt")
 
 # ─── Logging ────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -121,56 +121,58 @@ ROUTERS = (
     basic_cmds.router,
 )
 
-# ─── Build the aiohttp application ──────────────────────────────────────────
-async def build_app() -> web.Application:
-    # Initialize infra
+# ─── aiohttp startup & shutdown hooks ──────────────────────────────────────
+async def on_startup(app: web.Application):
+    # 1) infra
     await init_db_pools()
-    storage = await init_storage()
-    bot     = await init_bot()
-
-    # Dispatcher + middleware
+    storage    = await init_storage()
+    bot        = await init_bot()
     dispatcher = Dispatcher(storage=storage)
+
+    # 2) middleware & routers
     dispatcher.message.middleware(LogErrorsMiddleware())
     dispatcher.callback_query.middleware(LogErrorsMiddleware())
-
-    # Register your routers
     for r in ROUTERS:
-        try:
-            dispatcher.include_router(r)
-            logger.info(f"✅ Router registered: {r.__module__}", extra={"is_system": True})
-        except Exception:
-            logger.exception(f"❌ Failed to register router {r}", extra={"is_system": True})
-            raise
+        dispatcher.include_router(r)
+        logger.info(f"✅ Router registered: {r.__module__}", extra={"is_system": True})
 
-    # Set the webhook
-    webhook_path = f"/{BOT_TOKEN}"
-    webhook_url  = f"https://{DOMAIN}{webhook_path}"
-    await bot.set_webhook(webhook_url)
-    logger.info(f"✅ Webhook set to {webhook_url}", extra={"is_system": True})
+    # 3) webhook
+    path = f"/{BOT_TOKEN}"
+    url  = f"https://{DOMAIN}{path}"
+    # drop any old updates
+    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.set_webhook(url)
+    logger.info(f"✅ Webhook set to {url}", extra={"is_system": True})
 
-    # Create aiohttp app, wire aiogram startup/shutdown hooks
-    app = web.Application()
+    # 4) store in app
+    app["bot"]        = bot
+    app["dispatcher"] = dispatcher
+
+    # 5) wire aiogram → aiohttp
     setup_application(app, dispatcher)
-
-    # Register Telegram → dispatcher request handler
-    SimpleRequestHandler(
-        dispatcher=dispatcher,
-        bot=bot,
-        secret_token=None,      # or set your own secret‑token header here
-    ).register(app, path=webhook_path)
-
-    # Clean up DB pools on shutdown
-    async def on_shutdown(app: web.Application):
-        await DBPools.close()
-        logger.info("👋 Bot shutdown", extra={"is_system": True})
-    app.on_shutdown.append(on_shutdown)
+    SimpleRequestHandler(dispatcher=dispatcher, bot=bot).register(app, path=path)
 
     logger.info("🚀 Webhook server ready", extra={"is_system": True})
-    return app
+
+async def on_shutdown(app: web.Application):
+    # 1) delete webhook, close bot session
+    bot = app["bot"]
+    await bot.delete_webhook()
+    await bot.session.close()
+
+    # 2) close Redis storage
+    storage = app["dispatcher"].storage
+    await storage.redis.close()
+
+    # 3) close DB pools
+    await DBPools.close()
+    logger.info("👋 Bot shutdown", extra={"is_system": True})
 
 # ─── Entrypoint ─────────────────────────────────────────────────────────────
 def main() -> None:
-    app = asyncio.run(build_app())
+    app = web.Application()
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
     web.run_app(app, host="0.0.0.0", port=8443)
 
 if __name__ == "__main__":
