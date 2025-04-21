@@ -7,7 +7,7 @@ main.py — Clínica Fisina Telegram bot
 • Webhook proxy at 127.0.0.1:8444 via Nginx
 • Health + Ping endpoints
 • Periodic webhook self-check
-• Safe after container restart
+• Persistent command menu
 """
 
 # ─────────────── stdlib ───────────────
@@ -22,6 +22,7 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand
 from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
@@ -54,7 +55,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ────────── Helper Decorator ─────────────
+# ────── Decorator for startup logging ──────
 def log_and_reraise(step: str) -> Callable[[Callable[..., Coroutine]], Callable[..., Coroutine]]:
     def decorator(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
         @wraps(func)
@@ -95,13 +96,22 @@ async def init_bot() -> Bot:
     me = await bot.get_me()
     logger.info(f"✅ Logged in as @{me.username} ({me.id})", extra={"is_system": True})
 
-    # Always re-register webhook on startup
+    # Webhook + Command registration
     await bot.set_webhook(
         url=WEBHOOK_URL,
         secret_token=SECRET_TOKEN,
         drop_pending_updates=False,
     )
     logger.info(f"✅ Webhook set to {WEBHOOK_URL}", extra={"is_system": True})
+
+    await bot.set_my_commands([
+        BotCommand(command="start",    description="📍 Início"),
+        BotCommand(command="services", description="💆 Serviços disponíveis"),
+        BotCommand(command="team",     description="👥 Equipa clínica"),
+        BotCommand(command="contacts", description="📞 Contactos e localização"),
+    ])
+    logger.info("✅ Bot commands registered", extra={"is_system": True})
+
     return bot
 
 # ─────── Middleware (Error Logging) ───────
@@ -171,7 +181,7 @@ async def build_app() -> web.Application:
     app.router.add_get("/healthz", lambda _: web.Response(text="OK"))
     app.router.add_get("/ping",    lambda _: web.Response(text="pong"))
 
-    # Self-check webhook info every 60 minutes
+    # Periodic webhook validation
     async def periodic_self_check():
         while True:
             try:
