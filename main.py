@@ -5,6 +5,7 @@ main.py — Clínica Fisina Telegram bot
 • Redis FSM storage
 • PostgreSQL structured logging
 • Runs behind Nginx, proxied to 127.0.0.1:8444
+• Exposes /healthz and /ping for monitoring
 """
 
 # ────────────────────────── stdlib ──────────────────────────
@@ -21,10 +22,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
-from aiogram.webhook.aiohttp_server import (
-    SimpleRequestHandler,
-    setup_application,
-)
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from redis.asyncio import Redis
 from dotenv import load_dotenv
 
@@ -99,7 +97,6 @@ class LogErrorsMiddleware(BaseMiddleware):
         except Exception:
             telegram_uid = getattr(event, "from_user", None)
             telegram_uid = telegram_uid.id if telegram_uid else None
-
             chat_id: Any = None
             if hasattr(event, "chat") and event.chat:
                 chat_id = event.chat.id
@@ -147,7 +144,7 @@ async def build_app() -> web.Application:
 
     for r in ROUTERS:
         dispatcher.include_router(r)
-        logger.info(f"✅ Router registered: {r.__module__}", extra={"is_system": True})
+        logger.info(f"✅ Router registered: {getattr(r, '__name__', str(r))}", extra={"is_system": True})
 
     webhook_path = f"/{BOT_TOKEN}"
     webhook_url  = f"https://{DOMAIN}{webhook_path}"
@@ -155,13 +152,11 @@ async def build_app() -> web.Application:
     logger.info(f"✅ Webhook set to {webhook_url}", extra={"is_system": True})
 
     app = web.Application()
-
-    # Telegram webhook dispatcher
     SimpleRequestHandler(dispatcher=dispatcher, bot=bot).register(app, path=webhook_path)
 
-    # Health & ping endpoints
+    # Health check endpoints
     app.router.add_get("/healthz", lambda _: web.Response(text="OK", status=200))
-    app.router.add_get("/ping", lambda _: web.Response(text="pong", status=200))
+    app.router.add_get("/ping",    lambda _: web.Response(text="pong", status=200))
 
     async def on_shutdown(_: web.AppRunner) -> None:
         await dispatcher.storage.close()
