@@ -8,14 +8,14 @@ main.py — Clínica Fisina Telegram bot
 • Exposes /healthz and /ping for monitoring
 """
 
-# ────────────────────────── stdlib ──────────────────────────
+# ─────────────── stdlib ───────────────
 import asyncio
 import logging
 import os
 from functools import wraps
 from typing import Any, Callable, Coroutine
 
-# ───────────────────────── third‑party ──────────────────────
+# ──────────── third-party ─────────────
 from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -26,30 +26,31 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from redis.asyncio import Redis
 from dotenv import load_dotenv
 
-# ─────────────────────────── local ──────────────────────────
+# ──────────────── local ───────────────
 from infra.db_async import DBPools
 from infra.db_logger import pg_handler
 
-# ──────────────────── environment / settings ────────────────
+# ────────────── env settings ─────────────
 load_dotenv()
 
-BOT_TOKEN    = os.getenv("TELEGRAM_TOKEN")
-DOMAIN       = os.getenv("DOMAIN", "telegram.fisina.pt")
-WEBHOOK_PORT = int(os.getenv("WEBAPP_PORT", 8444))
+BOT_TOKEN     = os.getenv("TELEGRAM_TOKEN")
+SECRET_TOKEN  = os.getenv("TELEGRAM_SECRET_TOKEN")
+DOMAIN        = os.getenv("DOMAIN", "telegram.fisina.pt")
+WEBHOOK_PORT  = int(os.getenv("WEBAPP_PORT", 8444))
 
-REDIS_HOST   = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT   = int(os.getenv("REDIS_PORT", 6379))
-REDIS_DB     = int(os.getenv("REDIS_DB", 0))
-REDIS_PREFIX = os.getenv("REDIS_PREFIX", "fsm")
+REDIS_HOST    = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT    = int(os.getenv("REDIS_PORT", 6379))
+REDIS_DB      = int(os.getenv("REDIS_DB", 0))
+REDIS_PREFIX  = os.getenv("REDIS_PREFIX", "fsm")
 
-# ────────────────────────── logging ─────────────────────────
+# ──────────────── logging ───────────────
 logging.basicConfig(
     level=logging.INFO,
     handlers=[pg_handler, logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
 
-# ─────────── helper decorator (startup diagnostics) ─────────
+# ────── startup logging decorator ───────
 def log_and_reraise(step: str) -> Callable[[Callable[..., Coroutine]], Callable[..., Coroutine]]:
     def decorator(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
         @wraps(func)
@@ -62,7 +63,7 @@ def log_and_reraise(step: str) -> Callable[[Callable[..., Coroutine]], Callable[
         return wrapper
     return decorator
 
-# ────────────────────────── init helpers ────────────────────
+# ────────────── Init helpers ─────────────
 @log_and_reraise("DB pool init")
 async def init_db_pools() -> None:
     await DBPools.init()
@@ -89,7 +90,7 @@ async def init_bot() -> Bot:
     logger.info("✅ Bot instance created", extra={"is_system": True})
     return bot
 
-# ─────────────── error‑logging middleware ───────────────
+# ────────────── Middleware ───────────────
 class LogErrorsMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         try:
@@ -97,6 +98,7 @@ class LogErrorsMiddleware(BaseMiddleware):
         except Exception:
             telegram_uid = getattr(event, "from_user", None)
             telegram_uid = telegram_uid.id if telegram_uid else None
+
             chat_id: Any = None
             if hasattr(event, "chat") and event.chat:
                 chat_id = event.chat.id
@@ -113,7 +115,7 @@ class LogErrorsMiddleware(BaseMiddleware):
             )
             raise
 
-# ──────────────── router imports ──────────────────────────
+# ─────────────── Routers ────────────────
 from handlers import (
     main_menu,
     option1,
@@ -132,7 +134,7 @@ ROUTERS = (
     basic_cmds.router,
 )
 
-# ─────────────── aiohttp app factory ──────────────────────
+# ─────────────── aiohttp App ───────────────
 async def build_app() -> web.Application:
     await init_db_pools()
     storage = await init_storage()
@@ -148,16 +150,24 @@ async def build_app() -> web.Application:
 
     webhook_path = f"/{BOT_TOKEN}"
     webhook_url  = f"https://{DOMAIN}{webhook_path}"
-    await bot.set_webhook(webhook_url)
+
+    await bot.set_webhook(
+        url=webhook_url,
+        secret_token=SECRET_TOKEN,
+        drop_pending_updates=False,
+    )
     logger.info(f"✅ Webhook set to {webhook_url}", extra={"is_system": True})
 
     app = web.Application()
+
+    # Register webhook handler
     SimpleRequestHandler(dispatcher=dispatcher, bot=bot).register(app, path=webhook_path)
 
-    # Health check endpoints
-    app.router.add_get("/healthz", lambda _: web.Response(text="OK", status=200))
-    app.router.add_get("/ping",    lambda _: web.Response(text="pong", status=200))
+    # Add health checks
+    app.router.add_get("/healthz", lambda _: web.Response(text="OK"))
+    app.router.add_get("/ping", lambda _: web.Response(text="pong"))
 
+    # Shutdown handler
     async def on_shutdown(_: web.AppRunner) -> None:
         await dispatcher.storage.close()
         await dispatcher.storage.wait_closed()
@@ -170,7 +180,7 @@ async def build_app() -> web.Application:
 
     return app
 
-# ────────────────────────── Entrypoint ───────────────────────────
+# ───────────── Entrypoint ─────────────
 def main() -> None:
     async def runner():
         app = await build_app()
