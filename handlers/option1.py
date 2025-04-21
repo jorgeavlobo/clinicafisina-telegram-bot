@@ -5,7 +5,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from states.menu_states import MenuStates
 
-router = Router()
+router = Router(name="option1")
 
 async def _close_inline(cb: CallbackQuery, summary: str):
     """Edit current message to summary text and remove inline keyboard."""

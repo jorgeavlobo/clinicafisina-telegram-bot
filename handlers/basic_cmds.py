@@ -3,7 +3,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 import logging
 
-router = Router()
+router = Router(name="basic_cmds")
 logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------ #

@@ -8,7 +8,7 @@ import logging
 
 from states.menu_states import MenuStates
 
-router = Router()
+router = Router(name="main_menu")
 logger = logging.getLogger(__name__)
 
 @router.message(CommandStart())
