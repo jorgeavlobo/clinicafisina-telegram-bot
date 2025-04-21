@@ -4,7 +4,7 @@ main.py — Clínica Fisina Telegram bot
 • Aiogram v3 (webhook mode)
 • Redis FSM storage
 • PostgreSQL structured logging
-• Runs behind Nginx, proxied to 127.0.0.1:8443
+• Runs behind Nginx, proxied to 127.0.0.1:8444
 """
 
 # ────────────────────────── stdlib ──────────────────────────
@@ -35,11 +35,10 @@ from infra.db_logger import pg_handler
 # ──────────────────── environment / settings ────────────────
 load_dotenv()
 
-BOT_TOKEN    = os.getenv("TELEGRAM_TOKEN")               # required
-DOMAIN       = os.getenv("DOMAIN", "telegram.fisina.pt") # used for webhook URL
-WEBHOOK_PORT = int(os.getenv("WEBAPP_PORT", 8443))       # container port
+BOT_TOKEN    = os.getenv("TELEGRAM_TOKEN")
+DOMAIN       = os.getenv("DOMAIN", "telegram.fisina.pt")
+WEBHOOK_PORT = int(os.getenv("WEBAPP_PORT", 8444))  # container port
 
-# Redis
 REDIS_HOST   = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT   = int(os.getenv("REDIS_PORT", 6379))
 REDIS_DB     = int(os.getenv("REDIS_DB", 0))
@@ -52,7 +51,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ───────────────── helper decorator (startup steps) ─────────
+# ─────────── helper decorator (startup diagnostics) ─────────
 def log_and_reraise(step: str) -> Callable[[Callable[..., Coroutine]], Callable[..., Coroutine]]:
     def decorator(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
         @wraps(func)
@@ -92,7 +91,7 @@ async def init_bot() -> Bot:
     logger.info("✅ Bot instance created", extra={"is_system": True})
     return bot
 
-# ─────────────── custom error‑logging middleware ────────────
+# ─────────────── error‑logging middleware ───────────────
 class LogErrorsMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         try:
@@ -117,7 +116,7 @@ class LogErrorsMiddleware(BaseMiddleware):
             )
             raise
 
-# ─────────────────────── routers import ─────────────────────
+# ──────────────── router imports ──────────────────────────
 from handlers import (
     main_menu,
     option1,
@@ -136,74 +135,56 @@ ROUTERS = (
     basic_cmds.router,
 )
 
-# ───────────────────── aiohttp app factory ──────────────────
+# ─────────────── aiohttp app factory ──────────────────────
 async def build_app() -> web.Application:
-    """Create aiohttp.web.Application with Aiogram dispatcher attached."""
     await init_db_pools()
     storage = await init_storage()
     bot     = await init_bot()
 
-    # Dispatcher with Redis FSM storage
-    dp = Dispatcher(storage=storage)
-    dp.message.middleware(LogErrorsMiddleware())
-    dp.callback_query.middleware(LogErrorsMiddleware())
+    dispatcher = Dispatcher(storage=storage)
+    dispatcher.message.middleware(LogErrorsMiddleware())
+    dispatcher.callback_query.middleware(LogErrorsMiddleware())
 
     for r in ROUTERS:
-        dp.include_router(r)
+        dispatcher.include_router(r)
         logger.info(f"✅ Router registered: {r.__module__}", extra={"is_system": True})
 
-    # ─── webhook registration on Aiogram side ───────────────
     webhook_path = f"/{BOT_TOKEN}"
     webhook_url  = f"https://{DOMAIN}{webhook_path}"
     await bot.set_webhook(webhook_url)
     logger.info(f"✅ Webhook set to {webhook_url}", extra={"is_system": True})
 
-    # ─── aiohttp application wiring ─────────────────────────
     app = web.Application()
+    SimpleRequestHandler(dispatcher=dispatcher, bot=bot).register(app, path=webhook_path)
 
-    # Route POST <webhook_path> → dispatcher
-    SimpleRequestHandler(
-        dispatcher=dp,
-        bot=bot,
-    ).register(app, path=webhook_path)
-
-    # Graceful shutdown: close pools & storage
     async def on_shutdown(_: web.AppRunner) -> None:
-        await dp.storage.close()
-        await dp.storage.wait_closed()
+        await dispatcher.storage.close()
+        await dispatcher.storage.wait_closed()
         await DBPools.close()
         await bot.session.close()
         logger.info("👋 Bot shutdown", extra={"is_system": True})
 
     app.on_shutdown.append(on_shutdown)
-
-    # Let Aiogram add a startup task that notifies middlewares etc.
-    setup_application(app, dp, bot=bot)
+    setup_application(app, dispatcher, bot=bot)
 
     return app
 
-# ───────────────────────── main() ───────────────────────────
+# ────────────────────────── Entrypoint ───────────────────────────
 def main() -> None:
-    """Entrypoint compatible with Docker CMD."""
-    app = asyncio.run(build_app())
+    async def runner():
+        app = await build_app()
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", WEBHOOK_PORT)
+        await site.start()
+        logger.info(f"🚀 Webhook server ready on 0.0.0.0:{WEBHOOK_PORT}", extra={"is_system": True})
+        while True:
+            await asyncio.sleep(3600)
 
-    runner = web.AppRunner(app)
-    asyncio.run(runner.setup())
-
-    site = web.TCPSite(
-        runner,
-        host="0.0.0.0",
-        port=WEBHOOK_PORT,  # default 8443
-    )
-    logger.info(f"🚀 Webhook server ready on 0.0.0.0:{WEBHOOK_PORT}", extra={"is_system": True})
-    asyncio.run(site.start())
-
-    # Keep the loop alive forever
     try:
-        asyncio.get_event_loop().run_forever()
+        asyncio.run(runner())
     except KeyboardInterrupt:
-        pass
+        logger.info("👋 Interrupted by user", extra={"is_system": True})
 
-# ────────────────────────── run ─────────────────────────────
 if __name__ == "__main__":  # pragma: no cover
     main()
