@@ -6,7 +6,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from states.menu_states import MenuStates
 from handlers.option1 import _close_inline  # reuse helper
 
-router = Router()
+router = Router(name="option2")
 
 @router.callback_query(MenuStates.main, F.data == "opt2")
 async def enter_option2(cb: CallbackQuery, state: FSMContext):
