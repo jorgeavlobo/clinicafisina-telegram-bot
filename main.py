@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 main.py — Clínica Fisina Telegram bot
-• Aiogram v3 (webhook mode)
+• Aiogram v3.3+ (ApplicationBuilder, webhook mode)
 • Redis FSM storage
 • PostgreSQL structured logging
-• Runs behind Nginx, proxied to 127.0.0.1:8444
-• Exposes /healthz and /ping for monitoring
+• Exposes /healthz and /ping
+• Persistent webhook setup + Nginx proxy at 127.0.0.1:8444
 """
 
 # ─────────────── stdlib ───────────────
@@ -17,12 +17,12 @@ from typing import Any, Callable, Coroutine
 
 # ──────────── third-party ─────────────
 from aiohttp import web
-from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
+from aiogram import Bot
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
-from aiogram.dispatcher.middlewares.base import BaseMiddleware
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiogram import Application, ApplicationBuilder
+from aiogram.dispatcher.middlewares.base import BaseMiddleware
 from redis.asyncio import Redis
 from dotenv import load_dotenv
 
@@ -30,27 +30,29 @@ from dotenv import load_dotenv
 from infra.db_async import DBPools
 from infra.db_logger import pg_handler
 
-# ────────────── env settings ─────────────
+# ─────────────── Settings ───────────────
 load_dotenv()
 
 BOT_TOKEN     = os.getenv("TELEGRAM_TOKEN")
 SECRET_TOKEN  = os.getenv("TELEGRAM_SECRET_TOKEN")
 DOMAIN        = os.getenv("DOMAIN", "telegram.fisina.pt")
 WEBHOOK_PORT  = int(os.getenv("WEBAPP_PORT", 8444))
+WEBHOOK_PATH  = f"/{BOT_TOKEN}"
+WEBHOOK_URL   = f"https://{DOMAIN}{WEBHOOK_PATH}"
 
 REDIS_HOST    = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT    = int(os.getenv("REDIS_PORT", 6379))
 REDIS_DB      = int(os.getenv("REDIS_DB", 0))
 REDIS_PREFIX  = os.getenv("REDIS_PREFIX", "fsm")
 
-# ──────────────── logging ───────────────
+# ─────────────── Logging ────────────────
 logging.basicConfig(
     level=logging.INFO,
-    handlers=[pg_handler, logging.StreamHandler()],
+    handlers=[pg_handler, logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
-# ────── startup logging decorator ───────
+# ────────── Helper Decorator ─────────────
 def log_and_reraise(step: str) -> Callable[[Callable[..., Coroutine]], Callable[..., Coroutine]]:
     def decorator(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
         @wraps(func)
@@ -63,13 +65,13 @@ def log_and_reraise(step: str) -> Callable[[Callable[..., Coroutine]], Callable[
         return wrapper
     return decorator
 
-# ────────────── Init helpers ─────────────
+# ─────────────── Init ────────────────
 @log_and_reraise("DB pool init")
 async def init_db_pools() -> None:
     await DBPools.init()
     logger.info("✅ DB pools initialised", extra={"is_system": True})
 
-@log_and_reraise("Redis storage init")
+@log_and_reraise("Redis FSM init")
 async def init_storage() -> RedisStorage:
     redis = Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
     storage = RedisStorage(
@@ -78,19 +80,10 @@ async def init_storage() -> RedisStorage:
         data_ttl=86400,
         key_builder=DefaultKeyBuilder(prefix=REDIS_PREFIX, with_bot_id=True),
     )
-    logger.info("✅ Redis storage ready", extra={"is_system": True})
+    logger.info("✅ Redis FSM storage ready", extra={"is_system": True})
     return storage
 
-@log_and_reraise("Bot init")
-async def init_bot() -> Bot:
-    bot = Bot(
-        token=BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
-    logger.info("✅ Bot instance created", extra={"is_system": True})
-    return bot
-
-# ────────────── Middleware ───────────────
+# ─────── Middleware (Error Logging) ───────
 class LogErrorsMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         try:
@@ -102,7 +95,7 @@ class LogErrorsMiddleware(BaseMiddleware):
             if hasattr(event, "chat") and event.chat:
                 chat_id = event.chat.id
             elif hasattr(event, "message") and event.message:
-                chat_id = event.message.chat.id
+                chat_id = message.chat.id
 
             logger.exception(
                 "Unhandled exception inside handler",
@@ -114,7 +107,7 @@ class LogErrorsMiddleware(BaseMiddleware):
             )
             raise
 
-# ─────────────── Routers ────────────────
+# ─────────── Router imports ───────────
 from handlers import (
     main_menu,
     option1,
@@ -133,53 +126,51 @@ ROUTERS = (
     basic_cmds.router,
 )
 
-# ─────────────── aiohttp App ───────────────
+# ─────── aiohttp + ApplicationBuilder ───────
 async def build_app() -> web.Application:
     await init_db_pools()
     storage = await init_storage()
-    bot     = await init_bot()
 
-    dispatcher = Dispatcher(storage=storage)
-    dispatcher.message.middleware(LogErrorsMiddleware())
-    dispatcher.callback_query.middleware(LogErrorsMiddleware())
+    app = ApplicationBuilder() \
+        .token(BOT_TOKEN) \
+        .parse_mode(ParseMode.HTML) \
+        .secret_token(SECRET_TOKEN) \
+        .webhook_path(WEBHOOK_PATH) \
+        .webhook_url(WEBHOOK_URL) \
+        .skip_updates(False) \
+        .storage(storage) \
+        .build()
+
+    app.bot_info = await app.bot.me()
+
+    app.message.middleware(LogErrorsMiddleware())
+    app.callback_query.middleware(LogErrorsMiddleware())
 
     for r in ROUTERS:
-        name = getattr(r, '__module__', str(r))
+        name = getattr(r, "__module__", str(r))
+        app.include_router(r)
         logger.info(f"✅ Router registered: {name}", extra={"is_system": True})
-        dispatcher.include_router(r)
 
-    # Register webhook (Aiogram side)
-    webhook_path = f"/{BOT_TOKEN}"
-    webhook_url  = f"https://{DOMAIN}{webhook_path}"
+    # ───── aiohttp Web Application ─────
+    aiohttp_app = web.Application()
+    SimpleRequestHandler(
+        dispatcher=app,
+        bot=app.bot,
+    ).register(aiohttp_app, path=WEBHOOK_PATH)
 
-    await bot.set_webhook(
-        url=webhook_url,
-        secret_token=SECRET_TOKEN,
-        drop_pending_updates=False,
-    )
-    logger.info(f"✅ Webhook set to {webhook_url}", extra={"is_system": True})
+    aiohttp_app.router.add_get("/healthz", lambda _: web.Response(text="OK"))
+    aiohttp_app.router.add_get("/ping", lambda _: web.Response(text="pong"))
 
-    # Web application
-    app = web.Application()
-
-    # Handle Telegram updates
-    SimpleRequestHandler(dispatcher=dispatcher, bot=bot).register(app, path=webhook_path)
-
-    # Health + Ping
-    app.router.add_get("/healthz", lambda _: web.Response(text="OK"))
-    app.router.add_get("/ping", lambda _: web.Response(text="pong"))
-
-    # Graceful shutdown
     async def on_shutdown(_: web.AppRunner) -> None:
-        await dispatcher.storage.close()
-        await dispatcher.storage.wait_closed()
+        await app.shutdown()
+        await app.bot.session.close()
         await DBPools.close()
-        await bot.session.close()
         logger.info("👋 Bot shutdown", extra={"is_system": True})
 
-    app.on_shutdown.append(on_shutdown)
-    setup_application(app, dispatcher, bot=bot)
-    return app
+    aiohttp_app.on_shutdown.append(on_shutdown)
+    setup_application(aiohttp_app, app, bot=app.bot)
+
+    return aiohttp_app
 
 # ───────────── Entrypoint ─────────────
 def main() -> None:
@@ -198,5 +189,5 @@ def main() -> None:
     except KeyboardInterrupt:
         logger.info("👋 Interrupted by user", extra={"is_system": True})
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
