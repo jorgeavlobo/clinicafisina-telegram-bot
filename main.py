@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
 main.py — Clínica Fisina Telegram bot
-• Aiogram v3 (webhook mode)
+• Aiogram v3.20 (Dispatcher + webhook)
 • Redis FSM storage
 • PostgreSQL structured logging
-• Runs behind Nginx, proxied to 127.0.0.1:8444
-• Exposes /healthz and /ping for monitoring
+• Webhook proxy at 127.0.0.1:8444 via Nginx
+• Health + Ping endpoints
+• Periodic webhook self-check
+• Safe after container restart
 """
 
 # ─────────────── stdlib ───────────────
@@ -30,27 +32,29 @@ from dotenv import load_dotenv
 from infra.db_async import DBPools
 from infra.db_logger import pg_handler
 
-# ────────────── env settings ─────────────
+# ─────────────── Settings ───────────────
 load_dotenv()
 
 BOT_TOKEN     = os.getenv("TELEGRAM_TOKEN")
 SECRET_TOKEN  = os.getenv("TELEGRAM_SECRET_TOKEN")
 DOMAIN        = os.getenv("DOMAIN", "telegram.fisina.pt")
 WEBHOOK_PORT  = int(os.getenv("WEBAPP_PORT", 8444))
+WEBHOOK_PATH  = f"/{BOT_TOKEN}"
+WEBHOOK_URL   = f"https://{DOMAIN}{WEBHOOK_PATH}"
 
 REDIS_HOST    = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT    = int(os.getenv("REDIS_PORT", 6379))
 REDIS_DB      = int(os.getenv("REDIS_DB", 0))
 REDIS_PREFIX  = os.getenv("REDIS_PREFIX", "fsm")
 
-# ──────────────── logging ───────────────
+# ─────────────── Logging ────────────────
 logging.basicConfig(
     level=logging.INFO,
-    handlers=[pg_handler, logging.StreamHandler()],
+    handlers=[pg_handler, logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
-# ────── startup logging decorator ───────
+# ────────── Helper Decorator ─────────────
 def log_and_reraise(step: str) -> Callable[[Callable[..., Coroutine]], Callable[..., Coroutine]]:
     def decorator(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
         @wraps(func)
@@ -63,13 +67,13 @@ def log_and_reraise(step: str) -> Callable[[Callable[..., Coroutine]], Callable[
         return wrapper
     return decorator
 
-# ────────────── Init helpers ─────────────
+# ─────────────── Init ────────────────
 @log_and_reraise("DB pool init")
 async def init_db_pools() -> None:
     await DBPools.init()
     logger.info("✅ DB pools initialised", extra={"is_system": True})
 
-@log_and_reraise("Redis storage init")
+@log_and_reraise("Redis FSM init")
 async def init_storage() -> RedisStorage:
     redis = Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
     storage = RedisStorage(
@@ -78,7 +82,7 @@ async def init_storage() -> RedisStorage:
         data_ttl=86400,
         key_builder=DefaultKeyBuilder(prefix=REDIS_PREFIX, with_bot_id=True),
     )
-    logger.info("✅ Redis storage ready", extra={"is_system": True})
+    logger.info("✅ Redis FSM storage ready", extra={"is_system": True})
     return storage
 
 @log_and_reraise("Bot init")
@@ -87,10 +91,20 @@ async def init_bot() -> Bot:
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    logger.info("✅ Bot instance created", extra={"is_system": True})
+
+    me = await bot.get_me()
+    logger.info(f"✅ Logged in as @{me.username} ({me.id})", extra={"is_system": True})
+
+    # Always re-register webhook on startup
+    await bot.set_webhook(
+        url=WEBHOOK_URL,
+        secret_token=SECRET_TOKEN,
+        drop_pending_updates=False,
+    )
+    logger.info(f"✅ Webhook set to {WEBHOOK_URL}", extra={"is_system": True})
     return bot
 
-# ────────────── Middleware ───────────────
+# ─────── Middleware (Error Logging) ───────
 class LogErrorsMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         try:
@@ -114,7 +128,7 @@ class LogErrorsMiddleware(BaseMiddleware):
             )
             raise
 
-# ─────────────── Routers ────────────────
+# ─────────── Router imports ───────────
 from handlers import (
     main_menu,
     option1,
@@ -133,7 +147,7 @@ ROUTERS = (
     basic_cmds.router,
 )
 
-# ─────────────── aiohttp App ───────────────
+# ─────── aiohttp App Factory ───────
 async def build_app() -> web.Application:
     await init_db_pools()
     storage = await init_storage()
@@ -144,32 +158,32 @@ async def build_app() -> web.Application:
     dispatcher.callback_query.middleware(LogErrorsMiddleware())
 
     for r in ROUTERS:
-        name = getattr(r, '__module__', str(r))
-        logger.info(f"✅ Router registered: {name}", extra={"is_system": True})
+        name = getattr(r, "__module__", str(r))
         dispatcher.include_router(r)
+        logger.info(f"✅ Router registered: {name}", extra={"is_system": True})
 
-    # Register webhook (Aiogram side)
-    webhook_path = f"/{BOT_TOKEN}"
-    webhook_url  = f"https://{DOMAIN}{webhook_path}"
-
-    await bot.set_webhook(
-        url=webhook_url,
-        secret_token=SECRET_TOKEN,
-        drop_pending_updates=False,
-    )
-    logger.info(f"✅ Webhook set to {webhook_url}", extra={"is_system": True})
-
-    # Web application
     app = web.Application()
 
-    # Handle Telegram updates
-    SimpleRequestHandler(dispatcher=dispatcher, bot=bot).register(app, path=webhook_path)
+    # Webhook path
+    SimpleRequestHandler(dispatcher=dispatcher, bot=bot).register(app, path=WEBHOOK_PATH)
 
-    # Health + Ping
+    # Health checks
     app.router.add_get("/healthz", lambda _: web.Response(text="OK"))
-    app.router.add_get("/ping", lambda _: web.Response(text="pong"))
+    app.router.add_get("/ping",    lambda _: web.Response(text="pong"))
 
-    # Graceful shutdown
+    # Self-check webhook info every 60 minutes
+    async def periodic_self_check():
+        while True:
+            try:
+                info = await bot.get_webhook_info()
+                logger.info(f"📡 Webhook info: {info.url}", extra={"is_system": True})
+            except Exception as e:
+                logger.warning(f"⚠️ Webhook self-check failed: {e}")
+            await asyncio.sleep(3600)
+
+    async def on_startup(_: web.AppRunner) -> None:
+        asyncio.create_task(periodic_self_check())
+
     async def on_shutdown(_: web.AppRunner) -> None:
         await dispatcher.storage.close()
         await dispatcher.storage.wait_closed()
@@ -177,6 +191,7 @@ async def build_app() -> web.Application:
         await bot.session.close()
         logger.info("👋 Bot shutdown", extra={"is_system": True})
 
+    app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
     setup_application(app, dispatcher, bot=bot)
     return app
