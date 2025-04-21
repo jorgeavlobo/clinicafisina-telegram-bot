@@ -7,9 +7,8 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
-    # maps container port 8443 (where aiohttp runs) → host 127.0.0.1:8444 (where nginx connects)
     ports:
-      - "127.0.0.1:8444:8443"
+      - "127.0.0.1:8444:8444"  # <== FIXED: match container port to main.py
 
     networks:
       - redis_net
