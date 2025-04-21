@@ -98,7 +98,6 @@ class LogErrorsMiddleware(BaseMiddleware):
         except Exception:
             telegram_uid = getattr(event, "from_user", None)
             telegram_uid = telegram_uid.id if telegram_uid else None
-
             chat_id: Any = None
             if hasattr(event, "chat") and event.chat:
                 chat_id = event.chat.id
@@ -145,9 +144,11 @@ async def build_app() -> web.Application:
     dispatcher.callback_query.middleware(LogErrorsMiddleware())
 
     for r in ROUTERS:
+        name = getattr(r, '__module__', str(r))
+        logger.info(f"✅ Router registered: {name}", extra={"is_system": True})
         dispatcher.include_router(r)
-        logger.info(f"✅ Router registered: {getattr(r, '__name__', str(r))}", extra={"is_system": True})
 
+    # Register webhook (Aiogram side)
     webhook_path = f"/{BOT_TOKEN}"
     webhook_url  = f"https://{DOMAIN}{webhook_path}"
 
@@ -158,16 +159,17 @@ async def build_app() -> web.Application:
     )
     logger.info(f"✅ Webhook set to {webhook_url}", extra={"is_system": True})
 
+    # Web application
     app = web.Application()
 
-    # Register webhook handler
+    # Handle Telegram updates
     SimpleRequestHandler(dispatcher=dispatcher, bot=bot).register(app, path=webhook_path)
 
-    # Add health checks
+    # Health + Ping
     app.router.add_get("/healthz", lambda _: web.Response(text="OK"))
     app.router.add_get("/ping", lambda _: web.Response(text="pong"))
 
-    # Shutdown handler
+    # Graceful shutdown
     async def on_shutdown(_: web.AppRunner) -> None:
         await dispatcher.storage.close()
         await dispatcher.storage.wait_closed()
@@ -177,7 +179,6 @@ async def build_app() -> web.Application:
 
     app.on_shutdown.append(on_shutdown)
     setup_application(app, dispatcher, bot=bot)
-
     return app
 
 # ───────────── Entrypoint ─────────────
