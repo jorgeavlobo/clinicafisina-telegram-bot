@@ -168,9 +168,12 @@ async def build_app() -> web.Application:
     dispatcher.callback_query.middleware(LogErrorsMiddleware())
 
     for r in ROUTERS:
-        name = getattr(r, "__module__", str(r))
         dispatcher.include_router(r)
-        logger.info(f"✅ Router registered: {name}", extra={"is_system": True})
+
+        # Try router.name → fallback to __module__ or repr
+        router_name = getattr(r, "name", None) or getattr(r, "__module__", None) or repr(r)
+
+        logger.info(f"✅ Router registered: {router_name}", extra={"is_system": True})
 
     app = web.Application()
 
