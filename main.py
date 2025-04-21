@@ -37,7 +37,7 @@ load_dotenv()
 
 BOT_TOKEN    = os.getenv("TELEGRAM_TOKEN")
 DOMAIN       = os.getenv("DOMAIN", "telegram.fisina.pt")
-WEBHOOK_PORT = int(os.getenv("WEBAPP_PORT", 8444))  # container port
+WEBHOOK_PORT = int(os.getenv("WEBAPP_PORT", 8444))
 
 REDIS_HOST   = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT   = int(os.getenv("REDIS_PORT", 6379))
@@ -155,7 +155,13 @@ async def build_app() -> web.Application:
     logger.info(f"✅ Webhook set to {webhook_url}", extra={"is_system": True})
 
     app = web.Application()
+
+    # Telegram webhook dispatcher
     SimpleRequestHandler(dispatcher=dispatcher, bot=bot).register(app, path=webhook_path)
+
+    # Health & ping endpoints
+    app.router.add_get("/healthz", lambda _: web.Response(text="OK", status=200))
+    app.router.add_get("/ping", lambda _: web.Response(text="pong", status=200))
 
     async def on_shutdown(_: web.AppRunner) -> None:
         await dispatcher.storage.close()
