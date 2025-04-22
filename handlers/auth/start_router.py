@@ -1,33 +1,45 @@
-# handlers/auth/start_router.py
-from aiogram import Router, F, types
-from aiogram.fsm.context import FSMContext
-from aiogram.types import ReplyKeyboardRemove
-from handlers.common.keyboards import share_phone_kb
-from dal.dal import fetch_user_by_telegram_id, log_visitor_action
+"""
+/start – identifica o utilizador ou inicia onboarding.
+"""
 
+import logging
+from aiogram import Router, types, F
+from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
+from shared.dal import get_user_by_telegram_id, link_telegram_to_user
+from handlers.common.keyboards import share_phone_kb, role_choice_kb
+
+logger = logging.getLogger(__name__)
 router = Router(name="auth_start")
 
 
-@router.message(F.text == "/start")
-async def cmd_start(message: types.Message, state: FSMContext) -> None:
-    tg_id = message.from_user.id
+@router.message(CommandStart())
+async def cmd_start(msg: types.Message, state: FSMContext) -> None:
+    """Processa /start:
+       1. vê se já temos telegram_user_id na BD
+       2. senão, pede nº de telefone
+    """
+    await state.clear()
 
-    user = await fetch_user_by_telegram_id(tg_id)
+    user = await get_user_by_telegram_id(msg.from_user.id)
     if user:
-        # Já reconhecido → encaminhar para dispatcher central
-        await state.clear()
-        await message.answer(
-            "Bem‑vindo novamente 👋 Vou carregar o teu menu…",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        await log_visitor_action(telegram_id=tg_id, action="start_known")
-        # O dispatch global cuida do menu adequado
+        # Já registado → mostrar escolha de role (se >1) ou menu de role único
+        roles = user["roles"]                           # ex.: ["patient"] ou ["patient","caregiver"]
+        if len(roles) == 1:
+            await router.emit(
+                types.Message(chat=msg.chat, from_user=msg.from_user, text=f"/menu_{roles[0]}"),
+                msg.bot
+            )
+        else:
+            await msg.answer(
+                "Que perfil pretende utilizar no momento?",
+                reply_markup=role_choice_kb(roles)
+            )
         return
 
-    # Desconhecido → pedir contacto
-    await state.set_state("awaiting_phone")
-    await message.answer(
-        "Olá! Para confirmar a tua identidade, partilha o teu número 📱",
+    # Não encontrado → onboarding
+    await msg.answer(
+        "👋 Bem‑vindo à Clínica Fisina!\n"
+        "Para o reconhecer preciso que partilhe o seu nº de telemóvel.",
         reply_markup=share_phone_kb()
     )
-    await log_visitor_action(telegram_id=tg_id, action="start_unknown")
