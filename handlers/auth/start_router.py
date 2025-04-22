@@ -2,7 +2,7 @@
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.types import ReplyKeyboardRemove
-from keyboards import kb_share_phone
+from handlers.common.keyboards import share_phone_kb
 from dal.dal import fetch_user_by_telegram_id, log_visitor_action
 
 router = Router(name="auth_start")
@@ -28,6 +28,6 @@ async def cmd_start(message: types.Message, state: FSMContext) -> None:
     await state.set_state("awaiting_phone")
     await message.answer(
         "Olá! Para confirmar a tua identidade, partilha o teu número 📱",
-        reply_markup=kb_share_phone()
+        reply_markup=share_phone_kb()
     )
     await log_visitor_action(telegram_id=tg_id, action="start_unknown")
