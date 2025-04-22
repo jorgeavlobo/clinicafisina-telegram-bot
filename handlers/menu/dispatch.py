@@ -1,74 +1,46 @@
 """
-dispatch.py – Envia o *main menu* correcto consoante o role activo.
-Cada menu real deve estar noutro router/fich.
+Carrega todos os routers e garante que apenas 1 menu inline por chat fica activo.
 """
 
-from __future__ import annotations
-
 import logging
-from aiogram import types
+from aiogram import Dispatcher, types
 
-from handlers.common.keyboards import visitor_main_kb
-from handlers.role_switch.role_switch_router import remember_active_role
-
-logger = logging.getLogger(__name__)
+_LOG = logging.getLogger(__name__)
 
 
-async def dispatch_role_menu(message: types.Message, role_name: str) -> None:
-    """
-    Decide que menu mostrar.
-    • Guarda em sessão Redis (via remember_active_role) o role activo,
-      caso o utilizador queira mudar mais tarde.
-    • Envia o respectivo menu (placeholder simples por agora).
-    """
-    await remember_active_role(message.from_user.id, role_name)
+class SingleMenuMiddleware:
+    """Remove inline‑keyboard antigos no mesmo chat (anti‑lixo)."""
 
-    if role_name == "patient":
-        await message.answer(
-            "📅 <i>Menu Paciente</i>\n"
-            "Escolha uma opção:",
-            reply_markup=types.InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [types.InlineKeyboardButton("📅 Agenda", callback_data="patient_agenda")],
-                    [types.InlineKeyboardButton("💳 Pagamentos", callback_data="patient_payments")],
-                    [types.InlineKeyboardButton("🧑‍⚕️ Fisioterapeuta", callback_data="patient_physio")],
-                    [types.InlineKeyboardButton("📞 Contactos", callback_data="patient_contacts")],
-                ]
-            ),
-            parse_mode="HTML",
-        )
-        return
+    async def __call__(self, handler, event: types.TelegramObject, data):
+        if isinstance(event, types.Message):
+            # se a mensagem contém KB inline – apaga a anterior
+            if event.reply_markup and event.reply_markup.inline_keyboard:
+                old = data["redis"].get(f"k:last_menu:{event.chat.id}")
+                if old:
+                    try:
+                        await event.bot.edit_message_reply_markup(
+                            chat_id=event.chat.id,
+                            message_id=int(old),
+                            reply_markup=None,
+                        )
+                    except Exception:
+                        pass
+                data["redis"].setex(
+                    f"k:last_menu:{event.chat.id}", 3600, event.message_id
+                )
+        return await handler(event, data)
 
-    if role_name == "caregiver":
-        await message.answer(
-            "👨‍👩‍👧 <b>Menu Cuidador</b>\n"
-            "Selecione:",
-            reply_markup=types.InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [types.InlineKeyboardButton("🩺 Paciente(s)", callback_data="caregiver_patients")],
-                    [types.InlineKeyboardButton("ℹ️ Serviços",   callback_data="caregiver_services")],
-                    [types.InlineKeyboardButton("📞 Contactos",  callback_data="caregiver_contacts")],
-                ]
-            ),
-            parse_mode="HTML",
-        )
-        return
 
-    if role_name == "physiotherapist":
-        await message.answer(
-            "🧑‍⚕️ Menu Fisioterapeuta – em desenvolvimento 😉",
-        )
-        return
+def build_dispatcher(storage) -> Dispatcher:
+    from handlers import auth, registration  # noqa: circular‑import
 
-    if role_name == "administrator":
-        await message.answer(
-            "🛠 <b>Menu Administração</b>",
-            parse_mode="HTML",
-        )
-        return
+    dp = Dispatcher(storage=storage)
+    dp.message.middleware(SingleMenuMiddleware())
 
-    # Fallback – visitante
-    await message.answer(
-        "Bem‑vindo! Aqui tem informações públicas:",
-        reply_markup=visitor_main_kb(),
-    )
+    # inclui sub‑pacotes recursivamente
+    for sub in (auth, registration):
+        for r in sub.__all__:
+            _LOG.info("✅ Router registado: %s", r)
+            dp.include_router(r)
+
+    return dp
