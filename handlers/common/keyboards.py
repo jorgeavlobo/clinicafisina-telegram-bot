@@ -1,5 +1,6 @@
 """
-Colecção de teclados (reply / inline) reutilizados em vários routers.
+Coleção de teclados (reply / inline) usados em vários routers.
+Mantemos todos aqui para evitar duplicação.
 """
 
 from aiogram.types import (
@@ -7,27 +8,22 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
 )
 
-# ────────── onboarding / visitante ──────────
+
+# ────────── onboarding ──────────
 def share_phone_kb() -> ReplyKeyboardMarkup:
-    """
-    Teclado de pedido de número de telemóvel.
-    O botão «Cancelar» permite ao utilizador recusar sem ter
-    de fechar manualmente o keyboard.
-    """
+    """Pede ao utilizador para partilhar o contacto Telegram."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📲 Partilhar nº de telemóvel", request_contact=True)],
-            [KeyboardButton(text="❌ Cancelar")],
+            [KeyboardButton("📲 Partilhar nº de telemóvel", request_contact=True)],
+            [KeyboardButton("❌ Cancelar")]
         ],
         resize_keyboard=True,
-        one_time_keyboard=True,   # fecha‑se após 1 interacção
+        one_time_keyboard=True,
     )
 
 
 def visitor_main_kb() -> InlineKeyboardMarkup:
-    """
-    Menu inline para visitantes não identificados.
-    """
+    """Menu para utilizadores não identificados."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton("ℹ️ Serviços",  callback_data="visitor_services")],
@@ -39,26 +35,22 @@ def visitor_main_kb() -> InlineKeyboardMarkup:
 
 
 def regist_menu_kb() -> InlineKeyboardMarkup:
-    """
-    Sub‑menu de registo: escolha de tipo de conta.
-    """
+    """Escolha de tipo de registo (paciente vs. cuidador)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton("Sou Paciente",  callback_data="regist_patient")],
-            [InlineKeyboardButton("Sou Cuidador",  callback_data="regist_caregiver")],
-            [InlineKeyboardButton("⬅️ Voltar",     callback_data="regist_back")],
+            [InlineKeyboardButton("Sou Paciente", callback_data="regist_patient")],
+            [InlineKeyboardButton("Sou Cuidador", callback_data="regist_caregiver")],
+            [InlineKeyboardButton("⬅️ Voltar",    callback_data="regist_back")],
         ]
     )
 
 
-# ────────── escolha de role (vários roles) ──────────
+# ────────── escolha de role ──────────
 def role_choice_kb(role_names: list[str]) -> InlineKeyboardMarkup:
-    """
-    Gera teclado inline listando todos os roles que o utilizador tem,
-    para que possa escolher o contexto activo.
-    """
-    rows = [
-        [InlineKeyboardButton(f"🔸 {role.title()}", callback_data=f"role_{role}")]
-        for role in role_names
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    """Mostra buttons para alternar entre múltiplos roles que um user possa ter."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(f"🔸 {role.title()}", callback_data=f"role_{role}")]
+            for role in role_names
+        ]
+    )
