@@ -1,7 +1,7 @@
 # handlers/auth/share_phone_router.py
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
-from keyboards import kb_visitor_menu
+from handlers.common.keyboards import visitor_main_kb
 from dal.dal import fetch_user_by_phone, link_telegram_id, log_visitor_action
 
 router = Router(name="auth_share_phone")
@@ -31,6 +31,6 @@ async def got_phone(message: types.Message, state: FSMContext) -> None:
         await state.clear()
         await message.answer(
             "⚠️ Ainda não estás registado na nossa base de dados.",
-            reply_markup=kb_visitor_menu()
+            reply_markup=visitor_main_kb()
         )
         await log_visitor_action(telegram_id=tg_id, action="phone_unknown", extra=phone)
