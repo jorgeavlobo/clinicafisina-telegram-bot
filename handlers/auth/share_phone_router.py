@@ -1,75 +1,36 @@
-from __future__ import annotations
-
-import os
-import logging
+# handlers/auth/share_phone_router.py
 from aiogram import Router, types, F
-from redis.asyncio import Redis
+from aiogram.fsm.context import FSMContext
+from keyboards import kb_visitor_menu
+from dal.dal import fetch_user_by_phone, link_telegram_id, log_visitor_action
 
-from dal import (
-    get_user_by_phone,
-    link_telegram_id_to_user,
-    get_user_roles,
-)
-from handlers.common.keyboards import (
-    visitor_main_kb,
-    regist_menu_kb,
-)
-from handlers.role_switch.role_switch_router import prompt_role_choice
-from handlers.menu.dispatch import dispatch_role_menu
-
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-REDIS_DB   = int(os.getenv("REDIS_DB", 0))
-
-redis: Redis = Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
-
-logger = logging.getLogger(__name__)
 router = Router(name="auth_share_phone")
 
 
-async def _replace_last_menu(message: types.Message) -> None:
-    key = f"last_menu:{message.from_user.id}"
-    old_msg_id = await redis.get(key)
-    if old_msg_id:
-        try:
-            await message.bot.delete_message(
-                chat_id=message.chat.id,
-                message_id=int(old_msg_id),
-            )
-        except Exception:
-            pass
-    await redis.set(key, message.message_id, ex=600)
-
-
-@router.message(F.contact)
-async def handle_shared_contact(message: types.Message) -> None:
-    phone = message.contact.phone_number
-    chat_id = message.chat.id
+@router.message(
+    F.contact,            # só mensagens que contêm contacto
+    F.state == "awaiting_phone"
+)
+async def got_phone(message: types.Message, state: FSMContext) -> None:
     tg_id = message.from_user.id
+    phone = message.contact.phone_number
 
-    user = await get_user_by_phone(phone)
+    user = await fetch_user_by_phone(phone)
 
     if user:
-        # Linkar Telegram ID e continuar.
-        await link_telegram_id_to_user(user.user_id, tg_id)
-        roles = await get_user_roles(user.user_id)
-
-        if len(roles) > 1:
-            await prompt_role_choice(message, roles)
-        elif roles:
-            await dispatch_role_menu(message, roles[0])
-        else:
-            sent = await message.answer(
-                "Encontrámos o seu registo mas ainda não tem perfil atribuído!",
-                reply_markup=visitor_main_kb(),
-            )
-            await _replace_last_menu(sent)
-        return
-
-    # -------- Telefone não existe na BD --------
-    sent = await message.answer(
-        "📞 Obrigado! Ainda não temos o seu número no sistema. "
-        "Como se quer registar?",
-        reply_markup=regist_menu_kb(),
-    )
-    await _replace_last_menu(sent)
+        await link_telegram_id(user["user_id"], tg_id)
+        await state.clear()
+        await message.answer(
+            "✅ Número confirmado! A carregar o teu menu…",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
+        await log_visitor_action(telegram_id=tg_id, action="phone_linked", extra=phone)
+        # Dispatcher global tratará do menu agora
+    else:
+        # Telefone não existe → visitante identificado mas não registado
+        await state.clear()
+        await message.answer(
+            "⚠️ Ainda não estás registado na nossa base de dados.",
+            reply_markup=kb_visitor_menu()
+        )
+        await log_visitor_action(telegram_id=tg_id, action="phone_unknown", extra=phone)
