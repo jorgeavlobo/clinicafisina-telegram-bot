@@ -1,27 +1,12 @@
-"""
-Menu «Sou paciente / Sou cuidador» – apenas para visitantes identificados.
-"""
-
-import logging
 from aiogram import Router, types, F
-from handlers.common.keyboards import regist_menu_kb
-from aiogram.filters import Text
-from aiogram.fsm.context import FSMContext
 
-logger = logging.getLogger(__name__)
+from handlers.common.keyboards import regist_menu_kb, share_phone_kb
+
 router = Router(name="regist_menu")
 
-
-@router.message(F.text == "📝 Registar‑me")
-async def ask_role(msg: types.Message, state: FSMContext) -> None:
-    await state.set_state("awaiting_regist_choice")
-    await msg.answer(
-        "Como se pretende registar?",
+@router.callback_query(F.data == "visitor_register")
+async def cb_register(call: types.CallbackQuery):
+    await call.message.edit_text(
+        "Que tipo de registo pretendes fazer?",
         reply_markup=regist_menu_kb()
     )
-
-
-@router.callback_query(Text("regist_back"))
-async def back_to_visitor(cb: types.CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    await cb.message.delete()
