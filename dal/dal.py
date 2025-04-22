@@ -1,71 +1,55 @@
 """
-dal/dal.py  –  Data‑Access‑Layer (asyncpg)
-Todas as funções retornam dict‑like `asyncpg.Record`
+Data‑access layer – todas as queries isoladas.
 """
 
 import asyncpg
-from typing import Optional, Sequence, Any
-from contextlib import asynccontextmanager
-import os
 import logging
+from typing import Optional, List, Any
 
-logger = logging.getLogger(__name__)
-
-PG_DSN = os.getenv("DB_DSN", "postgresql://jorgeavlobo@localhost/fisina")
-
-
-@asynccontextmanager
-async def _get_conn():
-    conn: asyncpg.Connection = await asyncpg.connect(PG_DSN)
-    try:
-        yield conn
-    finally:
-        await conn.close()
+_LOG = logging.getLogger(__name__)
 
 
-# ---------- USERS -----------------------------------------------------------
+class DAL:
+    """Gateway assíncrono para Postgres (usa pool do infra.db_async)."""
 
-async def fetch_user_by_telegram_id(telegram_id: int) -> Optional[asyncpg.Record]:
-    sql = "SELECT * FROM users WHERE telegram_user_id = $1"
-    async with _get_conn() as conn:
-        return await conn.fetchrow(sql, telegram_id)
+    def __init__(self, pool: asyncpg.pool.Pool):
+        self.pool = pool
 
-
-async def link_telegram_id(user_id: str, telegram_id: int) -> None:
-    sql = "UPDATE users SET telegram_user_id = $1 WHERE user_id = $2"
-    async with _get_conn() as conn:
-        await conn.execute(sql, telegram_id, user_id)
-
-
-async def fetch_user_by_phone(phone: str) -> Optional[asyncpg.Record]:
-    sql = """
-        SELECT u.*
+    # ------------- users -------------
+    async def get_user_by_telegram(self, telegram_id: int) -> Optional[dict]:
+        q = """
+        SELECT u.*, array_agg(r.role_name) AS roles
         FROM users u
-        JOIN user_phones p USING (user_id)
-        WHERE p.phone_number = $1
-    """
-    async with _get_conn() as conn:
-        return await conn.fetchrow(sql, phone)
+        LEFT JOIN user_roles ur USING (user_id)
+        LEFT JOIN roles      r  USING (role_id)
+        WHERE telegram_user_id = $1
+        GROUP BY u.user_id;
+        """
+        async with self.pool.acquire() as con:
+            row = await con.fetchrow(q, telegram_id)
+            return dict(row) if row else None
 
+    async def link_telegram_to_user(self, user_id, telegram_id):
+        q = "UPDATE users SET telegram_user_id=$1 WHERE user_id=$2;"
+        async with self.pool.acquire() as con:
+            await con.execute(q, telegram_id, user_id)
 
-async def fetch_roles(user_id: str) -> Sequence[str]:
-    sql = """
-        SELECT r.role_name
-        FROM user_roles ur
-        JOIN roles r USING (role_id)
-        WHERE ur.user_id = $1
-    """
-    async with _get_conn() as conn:
-        rows = await conn.fetch(sql, user_id)
-        return [row["role_name"] for row in rows]
+    # ------------- phones -------------
+    async def get_user_by_phone(self, phone: str) -> Optional[dict]:
+        q = """
+        SELECT u.*
+        FROM user_phones p
+        JOIN users u USING (user_id)
+        WHERE REPLACE(phone_number, '+', '') = $1
+        LIMIT 1;
+        """
+        async with self.pool.acquire() as con:
+            row = await con.fetchrow(q, phone)
+            return dict(row) if row else None
 
-
-# ---------- VISITOR LOG -----------------------------------------------------
-
-async def log_visitor_action(*, telegram_id: int, action: str, extra: Any = None) -> None:
-    sql = """
-        INSERT INTO visitor_log (telegram_user_id, action, payload)
-        VALUES ($1,$2,$3)
-    """
-    async with _get_conn() as conn:
-        await conn.execute(sql, telegram_id, action, extra)
+    # helpers usados pelos routers ------------------
+    async def link_telegram_by_phone(self, phone: str, telegram: int):
+        user = await self.get_user_by_phone(phone)
+        if user:
+            await self.link_telegram_to_user(user["user_id"], telegram)
+        return user
