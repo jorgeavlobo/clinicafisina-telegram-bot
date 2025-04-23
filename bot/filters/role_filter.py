@@ -1,14 +1,15 @@
 # bot/filters/role_filter.py
 from typing import Iterable, List
-from aiogram.filters import BaseFilter
-from aiogram.types import TelegramObject
+from aiogram.filters import Filter        # ⬅️  Importa Filter
+from aiogram.types import Message         # ou TelegramObject
 
 
-class RoleFilter(BaseFilter):
+class RoleFilter(Filter):
     """
-    @router.message(RoleFilter("administrator"))
-    @router.message(RoleFilter(["patient", "caregiver"]))
-    Passa se qualquer dos papéis pedidos existir.
+    Uso:
+        @router.message(RoleFilter("administrator"))
+        @router.message(RoleFilter(["patient", "caregiver"]))
+    O handler só passa se o utilizador tiver (pelo menos) um dos papéis.
     """
 
     def __init__(self, roles: str | Iterable[str]) -> None:
@@ -16,13 +17,12 @@ class RoleFilter(BaseFilter):
             roles = [roles]
         self.required: List[str] = [r.lower() for r in roles]
 
-    async def __call__(              # <- event + kwargs (NÃO há 2.º posicional)
+    async def __call__(
         self,
-        event: TelegramObject,
-        **data,
+        event: Message,                     # 1.º argumento -> update
+        roles: list[str] | None = None,    # este nome TEM de coincidir
     ) -> bool:
-        roles: list[str] | None = data.get("roles")   # vem do middleware
-        if not roles:
+        if not roles:                      # middleware não injectou? -> falha
             return False
         roles = [r.lower() for r in roles]
         return any(r in roles for r in self.required)
