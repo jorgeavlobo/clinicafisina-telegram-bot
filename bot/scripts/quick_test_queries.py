@@ -9,6 +9,14 @@ PHONE = "+351912345678"           # ← escreve à mão, 7-15 dígitos após o +
 
 async def main():
     pool = await get_pool()
+    
+    print("DEBUG repr:", repr(PHONE), "len:", len(PHONE))
+
+    # confirma directamente no Postgres
+    ok = await pool.fetchval(
+        "SELECT $1 ~ '^\\+[1-9][0-9]{6,15}$'", PHONE
+    )
+    print("DEBUG regex passes in DB? ->", ok)
 
     # 1) ausência de telegram_user_id
     user = await q.get_user_by_telegram_id(pool, 9999)
