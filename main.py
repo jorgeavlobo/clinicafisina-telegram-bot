@@ -18,8 +18,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.storage.redis import RedisStorage
-from aiogram.middlewares.base import BaseMiddleware
-from aiogram.middlewares.throttling import ThrottlingMiddleware
+from aiogram import BaseMiddleware
+from aiogram import ThrottlingMiddleware
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler
 
 import redis.asyncio as aioredis
