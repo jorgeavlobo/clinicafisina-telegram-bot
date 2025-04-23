@@ -78,16 +78,6 @@ dp = Dispatcher(storage=RedisStorage(redis_pool))
 # Routers
 from handlers import basic_cmds, main_menu, option1, option2, option3, option4  # noqa: E402
 
-for rtr in (
-    basic_cmds.router,
-    main_menu.router,
-    option1.router,
-    option2.router,
-    option3.router,
-    option4.router,
-):
-    dp.include_router(rtr)
-
 # ────────────────────── Middlewares ──────────────────────
 
 
