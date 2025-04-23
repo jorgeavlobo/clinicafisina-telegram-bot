@@ -20,26 +20,29 @@ async def run() -> None:
         level=LOG_LEVEL,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     )
-    bot = Bot(token=BOT_TOKEN, parse_mode=None)
 
-    # 1. Dispatcher
+    bot = Bot(token=BOT_TOKEN, parse_mode=None)
     dp = Dispatcher(bot=bot)
 
-    # 2. Middlewares (ANTES de incluir routers!)
+    # ───────────────────────────────────────────────────────────────
+    # 1.  Middleware de roles — ESCOPO EXTERNO!
+    #    (executa-se antes dos filtros)
+    # ───────────────────────────────────────────────────────────────
     role_mw = RoleCheckMiddleware()
-    dp.message.middleware(role_mw)
-    dp.callback_query.middleware(role_mw)
-    # se usares outros tipos de update, acrescenta-os aqui
+    dp.message.outer_middleware(role_mw)
+    dp.callback_query.outer_middleware(role_mw)
+    # acrescente outros tipos de update se necessário
+    # ex.: dp.chat_member.outer_middleware(role_mw)
 
-    # 3. Routers
+    # 2. Routers
     from bot.handlers import register_routers
     register_routers(dp)
 
-    # 4. Webhook
+    # 3. Webhook
     await bot.set_webhook(WEBHOOK_URL, secret_token=SECRET_TOKEN)
     logging.info("Webhook registado em %s", WEBHOOK_URL)
 
-    # 5. Aiohttp app
+    # 4. Aiohttp app
     app = web.Application()
     SimpleRequestHandler(
         dispatcher=dp,
@@ -48,13 +51,13 @@ async def run() -> None:
     ).register(app, path=WEBHOOK_PATH)
     setup_application(app, dp)
 
-    # 6. Servidor HTTP interno
+    # 5. Servidor HTTP interno
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", WEBAPP_PORT).start()
-    logging.info("🚀 Webhook server listening on 0.0.0.0:%s", WEBAPP_PORT)
+    logging.info("🚀 Webhook server a escutar em 0.0.0.0:%s", WEBAPP_PORT)
 
-    # 7. Espera por SIGINT/SIGTERM
+    # 6. Espera por SIGINT/SIGTERM
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
