@@ -5,7 +5,7 @@ from bot.database import queries as q
 
 logging.basicConfig(level="INFO")
 
-PHONE = "+3519123456"           # ← escreve à mão, 7-15 dígitos após o +
+PHONE = "+351912345678"           # ← escreve à mão, 7-15 dígitos após o +
 
 async def main():
     pool = await get_pool()
