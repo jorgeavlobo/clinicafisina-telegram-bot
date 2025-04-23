@@ -5,7 +5,7 @@ from bot.utils.phone import cleanse
 
 logging.basicConfig(level="INFO")
 
-PHONE = cleanse("351912345678")      # sem '+'
+PHONE = cleanse("351916932985")
 
 def debug_digits(s: str) -> str:
     return " ".join(f"[{c}]" for c in s)
