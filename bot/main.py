@@ -50,7 +50,7 @@ async def run() -> None:
         secret_token=SECRET_TOKEN,
     ).register(app, path=WEBHOOK_PATH)
 
-    setup_application(app, bot=bot, dispatcher=dp)
+    setup_application(app, dp, bot)
 
     # 4. Arranca o servidor HTTP interno
     runner = web.AppRunner(app)
