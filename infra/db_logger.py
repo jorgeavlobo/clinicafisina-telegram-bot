@@ -9,7 +9,7 @@ from typing import Any
 from asyncpg import Connection
 from infra.db_async import DBPools
 
-LOG_TABLE = "clinicafisina_telegram_logs"  # variável para fácil mudança
+LOG_TABLE = "clinicafisina_telegram_bot"  # variável para fácil mudança
 
 _INSERT_SQL = f"""
 INSERT INTO {LOG_TABLE} (
