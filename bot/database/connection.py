@@ -1,50 +1,21 @@
-# bot/database/connection.py
+import asyncpg, asyncio
+from bot.config import DB_URL
 
-"""
-Connection pools for the Fisina bot (asyncpg).
+_pool = None
 
-A single helper dict (DB_KW) holds every option that is common to all
-databases; only the `database=` name differs between the two pools.
-"""
+async def init():
+    global _pool
+    _pool = await asyncpg.create_pool(DB_URL)
 
-from __future__ import annotations
+async def get_conn():
+    if _pool is None:
+        await init()
+    return _pool
 
-import os
-import asyncpg
-from dotenv import load_dotenv
-
-load_dotenv()
-
-DB_KW: dict[str, object] = {
-    "host":     os.getenv("DB_HOST", "localhost"),
-    "port":     int(os.getenv("DB_PORT", 5432)),
-    "user":     os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
-    # Treat “disable” or empty as *no SSL*
-    "ssl":      None if os.getenv("DB_SSLMODE", "disable") != "disable" else False,
-    "timeout":  float(os.getenv("DB_CONNECT_TIMEOUT", 60)),
-    "min_size": 1,
-    "max_size": 5,
-}
-
-class DBPools:
-    """Two independent pools – one for app data, one for logs."""
-    pool_fisina: asyncpg.Pool | None = None
-    pool_logs:   asyncpg.Pool | None = None
-
-    # ------------------------------------------------------------------ #
-    @classmethod
-    async def init(cls) -> None:
-        cls.pool_fisina = await asyncpg.create_pool(
-            **DB_KW, database=os.getenv("DB_NAME_FISINA", "fisina")
-        )
-        cls.pool_logs = await asyncpg.create_pool(
-            **DB_KW, database=os.getenv("DB_NAME_LOGS", "logs")
-        )
-
-    @classmethod
-    async def close(cls) -> None:
-        if cls.pool_fisina:
-            await cls.pool_fisina.close()
-        if cls.pool_logs:
-            await cls.pool_logs.close()
+# debug
+if __name__ == "__main__":
+    async def _test():
+        async with (await get_conn()).acquire() as conn:
+            v = await conn.fetchval("SELECT 1")
+            print("DB OK:", v)
+    asyncio.run(_test())
