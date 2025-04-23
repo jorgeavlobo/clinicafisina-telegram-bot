@@ -12,6 +12,7 @@ from .caregiver_handlers import router as caregiver_router
 from .physiotherapist_handlers import router as physio_router
 from .accountant_handlers import router as accountant_router
 from .administrator_handlers import router as admin_router
+from .debug_handlers import router as debug_router
 
 # Se algum ficheiro ainda não tem router, comenta a import ou cria stub
 
@@ -23,6 +24,7 @@ all_routers: list[Router] = [
     physio_router,
     accountant_router,
     admin_router,
+    debug_router,
 ]
 
 

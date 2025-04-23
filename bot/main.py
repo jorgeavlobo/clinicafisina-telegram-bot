@@ -9,41 +9,41 @@ from aiogram import Bot, Dispatcher
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 from bot.config import (
-    BOT_TOKEN,
-    LOG_LEVEL,
-    WEBAPP_PORT,
-    WEBHOOK_URL,
-    WEBHOOK_PATH,
-    SECRET_TOKEN,
+    BOT_TOKEN, LOG_LEVEL, WEBAPP_PORT,
+    WEBHOOK_URL, WEBHOOK_PATH, SECRET_TOKEN,
 )
 from bot.middlewares.role_check import RoleCheckMiddleware
 
 
 async def run() -> None:
-    logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s | %(levelname)s | %(message)s")
+    logging.basicConfig(level=LOG_LEVEL,
+                        format="%(asctime)s | %(levelname)s | %(message)s")
     bot = Bot(token=BOT_TOKEN, parse_mode=None)
 
-    # 1. Dispatcher COM o bot embutido
+    # 1. Dispatcher + middlewares
     dp = Dispatcher(bot=bot)
-    dp.message.middleware(RoleCheckMiddleware())
 
+    role_mw = RoleCheckMiddleware()
+    dp.message.middleware(role_mw)
+    dp.callback_query.middleware(role_mw)
+    # (acrescenta outras categorias se necessário: dp.chat_member.middleware...)
+
+    # routers
     from bot.handlers import register_routers
     register_routers(dp)
 
-    # 2. Regista / actualiza webhook
+    # 2. Webhook
     await bot.set_webhook(WEBHOOK_URL, secret_token=SECRET_TOKEN)
     logging.info("Webhook registado em %s", WEBHOOK_URL)
 
-    # 3. Aiohttp app + request handler
+    # 3. Aiohttp app
     app = web.Application()
     SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
         secret_token=SECRET_TOKEN,
     ).register(app, path=WEBHOOK_PATH)
-
-    # 👉 assinatura correcta: só dois argumentos
-    setup_application(app, dp)
+    setup_application(app, dp)          # dispatcher + bot (aiogram v3)
 
     # 4. Servidor HTTP interno
     runner = web.AppRunner(app)
