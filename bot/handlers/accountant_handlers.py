@@ -1,10 +1,10 @@
 # bot/handlers/accountant_handlers.py
 
-from aiogram import Router
+from aiogram import Router, types
+from aiogram.filters import Command
 
 router = Router(name="accountant")
 
-# opcional – placeholder de comando
-@router.message(commands=["accountant_dummy"])
-async def _(message):
-    await message.answer("Accountant handler stub está OK.")
+@router.message(Command("accountant_dummy"))
+async def accountant_dummy(msg: types.Message):
+    await msg.answer("Accountant handler stub está OK.")
