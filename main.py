@@ -42,9 +42,6 @@ BOT_TOKEN     = os.getenv("TELEGRAM_TOKEN")
 SECRET_TOKEN  = os.getenv("TELEGRAM_SECRET_TOKEN")
 DOMAIN        = os.getenv("DOMAIN", "telegram.fisina.pt")
 WEBHOOK_PORT  = int(os.getenv("WEBAPP_PORT", 8444))
-WEBHOOK_PATH  = f"/{BOT_TOKEN}"
-WEBHOOK_URL   = f"https://{DOMAIN}{WEBHOOK_PATH}"
-
 REDIS_HOST    = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT    = int(os.getenv("REDIS_PORT", 6379))
 REDIS_DB      = int(os.getenv("REDIS_DB", 0))
@@ -56,6 +53,13 @@ logging.basicConfig(
     handlers=[pg_handler, logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
+
+# ─────────────── Derived settings ───────────────
+if not BOT_TOKEN:
+    logger.critical("❌ TELEGRAM_TOKEN not found in environment", extra={"is_system": True})
+    raise ValueError("BOT_TOKEN is not defined")
+WEBHOOK_PATH = f"/{BOT_TOKEN}"
+WEBHOOK_URL  = f"https://{DOMAIN}{WEBHOOK_PATH}"
 
 # ────── Decorator for startup logging ──────
 def log_and_reraise(step: str) -> Callable[[Callable[..., Coroutine]], Callable[..., Coroutine]]:
@@ -80,7 +84,6 @@ async def init_db_pools() -> None:
 async def init_storage() -> RedisStorage:
     redis = Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
 
-    # ─────── Sanity‑check: garantir que o nó é master ───────
     try:
         role = await redis.execute_command("ROLE")
     except ResponseError as exc:
@@ -91,7 +94,6 @@ async def init_storage() -> RedisStorage:
     if role_name != "master":
         logger.critical("Redis arrancou como réplica! ROLE=%s", role_name, extra={"is_system": True})
         sys.exit(1)
-    # ─────────────────────────────────────────────────────────
 
     storage = RedisStorage(
         redis=redis,
@@ -112,7 +114,6 @@ async def init_bot() -> Bot:
     me = await bot.get_me()
     logger.info(f"✅ Logged in as @{me.username} ({me.id})", extra={"is_system": True})
 
-    # Webhook + Command registration
     await bot.set_webhook(
         url=WEBHOOK_URL,
         secret_token=SECRET_TOKEN,
@@ -185,22 +186,15 @@ async def build_app() -> web.Application:
 
     for r in ROUTERS:
         dispatcher.include_router(r)
-
-        # Try router.name → fallback to __module__ or repr
         router_name = getattr(r, "name", None) or getattr(r, "__module__", None) or repr(r)
-
         logger.info(f"✅ Router registered: {router_name}", extra={"is_system": True})
 
     app = web.Application()
-
-    # Webhook path
     SimpleRequestHandler(dispatcher=dispatcher, bot=bot).register(app, path=WEBHOOK_PATH)
 
-    # Health checks
     app.router.add_get("/healthz", lambda _: web.Response(text="OK"))
     app.router.add_get("/ping",    lambda _: web.Response(text="pong"))
 
-    # Periodic webhook validation
     async def periodic_self_check():
         while True:
             try:
