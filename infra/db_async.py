@@ -1,49 +1,77 @@
-# infra/db_async.py
 """
-Connection pools for the Fisina bot (asyncpg).
-
-A single helper dict (DB_KW) holds every option that is common to all
-databases; only the `database=` name differs between the two pools.
+Async PostgreSQL pools
 """
-
-from __future__ import annotations
 
 import os
+import ssl
 import asyncpg
-from dotenv import load_dotenv
+from typing import Final, Dict
 
-load_dotenv()
-
-DB_KW: dict[str, object] = {
+# Parâmetros comuns (host, porta, user, password, ssl…)
+DB_KW: Final[Dict[str, object]] = {
     "host":     os.getenv("DB_HOST", "localhost"),
     "port":     int(os.getenv("DB_PORT", 5432)),
-    "user":     os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
-    # Treat “disable” or empty as *no SSL*
-    "ssl":      None if os.getenv("DB_SSLMODE", "disable") != "disable" else False,
-    "timeout":  float(os.getenv("DB_CONNECT_TIMEOUT", 60)),
-    "min_size": 1,
-    "max_size": 5,
+    "user":     os.getenv("DB_USER", "postgres"),
+    "password": os.getenv("DB_PASSWORD", ""),
+    "timeout":  60,
+    "min_size": int(os.getenv("DB_POOL_MIN", 1)),
+    "max_size": int(os.getenv("DB_POOL_MAX", 5)),
+    # SSL – se DB_SSLMODE == disable → False, caso contrário SSLContext
+    "ssl": None
+    if os.getenv("DB_SSLMODE", "disable").lower() == "disable"
+    else ssl.create_default_context(),
 }
 
-class DBPools:
-    """Two independent pools – one for app data, one for logs."""
-    pool_fisina: asyncpg.Pool | None = None
-    pool_logs:   asyncpg.Pool | None = None
 
-    # ------------------------------------------------------------------ #
+class DBPools:
+    """
+    Armazena pools globalmente.
+    Uso: `await DBPools.init()` no startup,
+    depois `pool = await DBPools.pool("fisina")`.
+    """
+
+    _pools: dict[str, asyncpg.Pool] = {}
+
     @classmethod
     async def init(cls) -> None:
-        cls.pool_fisina = await asyncpg.create_pool(
-            **DB_KW, database=os.getenv("DB_NAME_FISINA", "fisina")
-        )
-        cls.pool_logs = await asyncpg.create_pool(
-            **DB_KW, database=os.getenv("DB_NAME_LOGS", "logs")
-        )
+        """Cria pools; idempotente."""
+        if cls._pools:  # já inicializado
+            return
+
+        db_map = {
+            "fisina": os.getenv("DB_NAME_FISINA", "fisina"),
+            "logs":   os.getenv("DB_NAME_LOGS",   "fisina_logs"),
+        }
+
+        for key, db_name in db_map.items():
+            cls._pools[key] = await asyncpg.create_pool(database=db_name, **DB_KW)
 
     @classmethod
     async def close(cls) -> None:
-        if cls.pool_fisina:
-            await cls.pool_fisina.close()
-        if cls.pool_logs:
-            await cls.pool_logs.close()
+        """Fecha todos os pools (para shutdown gracioso)."""
+        for pool in cls._pools.values():
+            await pool.close()
+        cls._pools.clear()
+
+    @classmethod
+    async def pool(cls, name: str = "fisina") -> asyncpg.Pool:
+        """
+        Devolve pool existente ou lança erro se ainda não inicializado.
+        """
+        pool = cls._pools.get(name)
+        if pool is None:
+            raise RuntimeError("DBPools not initialised; call DBPools.init() first")
+        return pool
+
+    # Helpers convenientes
+    @classmethod
+    async def fetch(cls, query: str, *args, name: str = "fisina"):
+        pool = await cls.pool(name)
+        async with pool.acquire() as conn:
+            return await conn.fetch(query, *args)
+
+    @classmethod
+    async def execute(cls, query: str, *args, name: str = "fisina"):
+        pool = await cls.pool(name)
+        async with pool.acquire() as conn:
+            return await conn.execute(query, *args)
