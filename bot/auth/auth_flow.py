@@ -8,7 +8,6 @@ Estados:
 """
 
 import logging
-from aiogram import Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     Message,
@@ -27,12 +26,16 @@ from bot.database import queries as q
 
 log = logging.getLogger(__name__)
 
-
 # ────────────────────────────────────────────────────────────────
 # helpers para teclados
 # ────────────────────────────────────────────────────────────────
 def contact_keyboard() -> ReplyKeyboardMarkup:
-    """Teclado 1-botão que pede partilha de contacto."""
+    """
+    Teclado que pede partilha de contacto.
+
+    ⚠️ Telegram só permite `request_contact=True` em reply-keyboard
+    (não existe em inline-keyboard).
+    """
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📱 Enviar contacto", request_contact=True)]
@@ -59,10 +62,7 @@ def confirm_keyboard() -> InlineKeyboardMarkup:
 # handlers de cada etapa
 # ────────────────────────────────────────────────────────────────
 async def start_onboarding(message: Message, state: FSMContext) -> None:
-    """
-    Entrypoint do /start quando o utilizador ainda não tem telegram_user_id
-    registado na BD.
-    """
+    """/start quando o utilizador ainda não está ligado na BD."""
     await state.set_state(AuthStates.WAITING_CONTACT)
     await message.answer(
         "Olá! Para continuar, por favor partilhe o seu número de telemóvel:",
@@ -71,21 +71,21 @@ async def start_onboarding(message: Message, state: FSMContext) -> None:
 
 
 async def handle_contact(message: Message, state: FSMContext) -> None:
-    """
-    Recebe o Contact. Se existir user com esse número, pede confirmação.
-    Caso contrário mostra mensagem de não registado.
-    """
+    """Recebe o contacto e procura perfil na BD."""
     contact: Contact = message.contact
     phone = contact.phone_number
     pool = await get_pool()
 
     user = await q.get_user_by_phone(pool, phone)
-    await message.answer(reply_markup=ReplyKeyboardRemove())
+
+    # remover o teclado de partilha
+    await message.answer("👍 Obrigado pelo contacto!", reply_markup=ReplyKeyboardRemove())
 
     if user:
-        # Guarda no state o user_id para usar na callback
+        # guarda user_id no FSM para a callback
         await state.update_data(db_user_id=str(user["user_id"]))
         await state.set_state(AuthStates.CONFIRMING_LINK)
+
         await message.answer(
             f"Encontrámos um perfil para *{user['first_name']} {user['last_name']}*.\n"
             "É você?",
@@ -95,19 +95,19 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
     else:
         await state.clear()
         await message.answer(
-            "Não encontramos esse número na nossa base. "
+            "Não encontramos esse número na nossa base.\n"
             "Assim que o seu registo estiver criado entraremos em contacto. Obrigado! 🙏",
         )
         log.info("Phone %s não encontrado – utilizador não registado", phone)
 
 
 async def confirm_link(cb: CallbackQuery, state: FSMContext) -> None:
-    """Utilizador confirmou que o perfil encontrado é dele (“Sim”)."""
+    """Utilizador confirmou que o perfil é dele (“Sim”)."""
     data = await state.get_data()
     user_id = data.get("db_user_id")
 
     if not user_id:
-        await cb.answer("Sessão expirada. Por favor envie /start novamente.", show_alert=True)
+        await cb.answer("Sessão expirada. Envie /start novamente.", show_alert=True)
         await state.clear()
         return
 
@@ -119,11 +119,11 @@ async def confirm_link(cb: CallbackQuery, state: FSMContext) -> None:
     await cb.message.edit_text("Ligação concluída! 🎉")
     log.info("Telegram %s ligado a user %s com roles %s", cb.from_user.id, user_id, roles)
 
-    # TODO: encaminhar para o menu apropriado, p.ex. show_menu(roles[0], cb.message.chat.id)
+    # TODO: show_menu(roles[0], cb.message.chat.id)
 
 
 async def cancel_link(cb: CallbackQuery, state: FSMContext) -> None:
-    """Utilizador disse “Não” – cancela o processo."""
+    """Utilizador escolheu “Não” – cancela o processo."""
     await state.clear()
     await cb.message.edit_text("Operação cancelada. Se precisar, envie novamente /start.")
     log.info("Utilizador %s cancelou ligação.", cb.from_user.id)
