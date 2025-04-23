@@ -1,18 +1,22 @@
 # bot/scripts/quick_test_queries.py
-import asyncio, logging
+import asyncio, logging, unicodedata, re
 from bot.database.connection import get_pool
 from bot.database import queries as q
 
 logging.basicConfig(level="INFO")
 
-PHONE = "+351912345678"           # ← escreve à mão, 7-15 dígitos após o +
+RAW_PHONE = "+351912345678"          # <- constante original
+PHONE = RAW_PHONE.strip()            # remove spaces / \r / \n
+assert re.fullmatch(r"\+\d{7,15}", PHONE), "Phone format invalid"
+
+def debug_chars(s: str) -> str:
+    return " ".join(f"[{c} U+{ord(c):04X}]" for c in s)
 
 async def main():
     pool = await get_pool()
-    
-    print("DEBUG repr:", repr(PHONE), "len:", len(PHONE))
 
-    # confirma directamente no Postgres
+    print("DEBUG PHONE:", debug_chars(PHONE), "len:", len(PHONE))
+
     ok = await pool.fetchval(
         "SELECT $1 ~ '^\\+[1-9][0-9]{6,15}$'", PHONE
     )
