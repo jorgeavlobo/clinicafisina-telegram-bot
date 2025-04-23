@@ -185,7 +185,7 @@ if __name__ == "__main__":
             "main:create_app",
             factory=True,
             host="0.0.0.0",
-            port=int(os.getenv("PORT", 8080)),
+            port=int(os.getenv("WEBAPP_PORT", 8444)),
         )
     else:  # default: polling for local dev
         try:
