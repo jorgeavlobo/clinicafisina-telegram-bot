@@ -1,25 +1,20 @@
-# bot/scripts/quick_test_queries.py
-import asyncio, logging, unicodedata, re
+import asyncio, logging
 from bot.database.connection import get_pool
 from bot.database import queries as q
+from bot.utils.phone import cleanse
 
 logging.basicConfig(level="INFO")
 
-RAW_PHONE = "+351912345678"          # <- constante original
-PHONE = RAW_PHONE.strip()            # remove spaces / \r / \n
-assert re.fullmatch(r"\+\d{7,15}", PHONE), "Phone format invalid"
+PHONE = cleanse("351916932985")
 
-def debug_chars(s: str) -> str:
-    return " ".join(f"[{c} U+{ord(c):04X}]" for c in s)
+def debug_digits(s: str) -> str:
+    return " ".join(f"[{c}]" for c in s)
 
 async def main():
     pool = await get_pool()
 
-    print("DEBUG PHONE:", debug_chars(PHONE), "len:", len(PHONE))
-
-    ok = await pool.fetchval(
-        "SELECT $1 ~ '^\\+[1-9][0-9]{6,15}$'", PHONE
-    )
+    print("DEBUG PHONE:", debug_digits(PHONE), "len:", len(PHONE))
+    ok = await pool.fetchval("SELECT $1 ~ '^[1-9][0-9]{6,14}$'", PHONE)
     print("DEBUG regex passes in DB? ->", ok)
 
     # 1) ausência de telegram_user_id
@@ -34,8 +29,7 @@ async def main():
 
     # 3) adiciona telefone de teste
     await pool.execute(
-        "INSERT INTO user_phones(user_id, phone_number, is_primary) "
-        "VALUES($1, $2, TRUE)",
+        "INSERT INTO user_phones(user_id, phone_number, is_primary) VALUES($1, $2, TRUE)",
         user_id,
         PHONE,
     )
@@ -49,12 +43,8 @@ async def main():
     logging.info("linked -> %s", await q.get_user_by_telegram_id(pool, 5555))
 
     # 6) seed role 'patient' e associa
-    await pool.execute(
-        "INSERT INTO roles(role_name) VALUES('patient') ON CONFLICT DO NOTHING"
-    )
-    role_id = await pool.fetchval(
-        "SELECT role_id FROM roles WHERE role_name='patient'"
-    )
+    await pool.execute("INSERT INTO roles(role_name) VALUES('patient') ON CONFLICT DO NOTHING")
+    role_id = await pool.fetchval("SELECT role_id FROM roles WHERE role_name='patient'")
     await pool.execute(
         "INSERT INTO user_roles(user_id, role_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
         user_id,

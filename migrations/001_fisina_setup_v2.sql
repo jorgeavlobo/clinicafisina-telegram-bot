@@ -150,7 +150,7 @@ CREATE TABLE IF NOT EXISTS user_phones (
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT chk_user_phones_format
-        CHECK (phone_number ~ '^\\+[1-9][0-9]{6,15}$')
+        CHECK (phone_number ~ '^[1-9][0-9]{6,14}$')
 );
 
 /* mesmo nº não pode aparecer duas vezes para o mesmo user */
