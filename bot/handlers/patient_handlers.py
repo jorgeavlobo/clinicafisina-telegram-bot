@@ -1,10 +1,10 @@
 # bot/handlers/patient_handlers.py
 
-from aiogram import Router
+from aiogram import Router, types
+from aiogram.filters import Command
 
 router = Router(name="patient")
 
-# opcional – placeholder de comando
-@router.message(commands=["patient_dummy"])
-async def _(message):
-    await message.answer("Patient handler stub está OK.")
+@router.message(Command("patient_dummy"))
+async def accountant_dummy(msg: types.Message):
+    await msg.answer("Patient handler stub está OK.")
