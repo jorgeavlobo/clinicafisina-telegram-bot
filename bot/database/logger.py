@@ -1,4 +1,5 @@
-# infra/db_logger.py
+# bot/database/logger.py
+
 import asyncio
 import logging
 import sys
