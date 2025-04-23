@@ -3,4 +3,3 @@ redis
 psycopg2-binary
 python-dotenv
 asyncpg
-uvicorn[standard]
