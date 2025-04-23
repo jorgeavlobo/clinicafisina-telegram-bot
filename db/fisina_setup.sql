@@ -1,16 +1,16 @@
--- =======================================================================
---  Setup script for database "fisina"
---  Cleaned & deduplicated on 2025-04-22
--- =======================================================================
+-- ======================================================================
+--  Setup script for database  F I S I N A           (v2 – 2025-04-23)
+--  Includes all refinements: UTC, UUID PKs, updated_at, constraints …
+-- ======================================================================
 
--------------------------------------------------------------------------
--- 0.  (Optional) create the role beforehand if it doesn’t exist
---     CREATE ROLE jorgeavlobo LOGIN PASSWORD '******';
--------------------------------------------------------------------------
+------------------------------------------------------------------
+-- 0. (Opcional) criar a role do proprietário se ainda não existir
+--    CREATE ROLE jorgeavlobo LOGIN PASSWORD '•••••';
+------------------------------------------------------------------
 
--------------------------------------------------------------------------
--- 1.  Create the database  (run once as super‑user)
--------------------------------------------------------------------------
+------------------------------------------------------------------
+-- 1. Criar a base de dados  (executa apenas uma vez, como super-user)
+------------------------------------------------------------------
 CREATE DATABASE fisina
     OWNER      = jorgeavlobo
     ENCODING   = 'UTF8'
@@ -20,133 +20,201 @@ CREATE DATABASE fisina
 
 \connect fisina
 
--------------------------------------------------------------------------
--- 2.  Global settings
--------------------------------------------------------------------------
-ALTER DATABASE fisina SET timezone TO 'UTC';
+------------------------------------------------------------------
+-- 2. Definições globais
+------------------------------------------------------------------
+ALTER DATABASE fisina    SET timezone TO 'UTC';
 ALTER ROLE     jorgeavlobo SET timezone TO 'UTC';
-
--- Work in the public schema by default
 SET search_path = public;
 
--------------------------------------------------------------------------
--- 3.  Extensions  (run once per database)
--------------------------------------------------------------------------
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";   -- UUID v1/v4 generator
+------------------------------------------------------------------
+-- 3. Extensões (uma vez por BD)
+------------------------------------------------------------------
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";   -- uuid_generate_v4()
 CREATE EXTENSION IF NOT EXISTS pgcrypto;      -- gen_random_uuid()
-CREATE EXTENSION IF NOT EXISTS citext;        -- case‑insensitive text
+CREATE EXTENSION IF NOT EXISTS citext;        -- e-mail case-insensitive
 
--------------------------------------------------------------------------
--- 4.  Privileges & defaults
--------------------------------------------------------------------------
+------------------------------------------------------------------
+-- 4. Privilegios & defaults
+------------------------------------------------------------------
 GRANT ALL ON SCHEMA public TO jorgeavlobo;
 
-ALTER DEFAULT PRIVILEGES
-    GRANT ALL ON TABLES    TO jorgeavlobo;
-ALTER DEFAULT PRIVILEGES
-    GRANT ALL ON SEQUENCES TO jorgeavlobo;
-ALTER DEFAULT PRIVILEGES
-    GRANT ALL ON FUNCTIONS TO jorgeavlobo;
-ALTER DEFAULT PRIVILEGES
-    GRANT ALL ON TYPES     TO jorgeavlobo;
+ALTER DEFAULT PRIVILEGES GRANT ALL ON TABLES    TO jorgeavlobo;
+ALTER DEFAULT PRIVILEGES GRANT ALL ON SEQUENCES TO jorgeavlobo;
+ALTER DEFAULT PRIVILEGES GRANT ALL ON FUNCTIONS TO jorgeavlobo;
+ALTER DEFAULT PRIVILEGES GRANT ALL ON TYPES     TO jorgeavlobo;
 
--------------------------------------------------------------------------
--- 5.  Tables & business logic
--------------------------------------------------------------------------
+------------------------------------------------------------------
+-- 5. Utilitários genéricos
+------------------------------------------------------------------
+/* timestamp de audit ------------------------ */
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at := now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-/* 5.1  USERS ---------------------------------------------------------- */
-CREATE TABLE IF NOT EXISTS public.users (
-    user_id             UUID           PRIMARY KEY DEFAULT gen_random_uuid(),
-    first_name          VARCHAR(100)   NOT NULL,
-    last_name           VARCHAR(100)   NOT NULL,
+/* helper para ligar telegram_user_id de forma idempotente */
+CREATE OR REPLACE FUNCTION link_telegram(p_user UUID, p_tgid BIGINT)
+RETURNS VOID AS $$
+INSERT INTO users(user_id, telegram_user_id)
+VALUES (p_user, p_tgid)
+ON CONFLICT (telegram_user_id)
+    WHERE telegram_user_id IS NOT NULL
+DO UPDATE
+      SET user_id = EXCLUDED.user_id;
+$$ LANGUAGE sql;
 
-    telegram_user_id    BIGINT,
-    tax_id_number       VARCHAR(30)    UNIQUE,
-    moloni_customer_id  INTEGER        UNIQUE,
+------------------------------------------------------------------
+-- 6. Tabelas de domínio
+------------------------------------------------------------------
 
-    created_at          TIMESTAMPTZ    NOT NULL DEFAULT now()
+/* 6.1 USERS ------------------------------------------------------- */
+CREATE TABLE IF NOT EXISTS users (
+    user_id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    first_name          VARCHAR(100) NOT NULL,
+    last_name           VARCHAR(100) NOT NULL,
+
+    telegram_user_id    BIGINT UNIQUE,
+    tax_id_number       VARCHAR(30) UNIQUE,        -- NIF/VAT
+    moloni_customer_id  INTEGER UNIQUE,            -- ligação a Moloni
+
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- telegram_user_id is only unique when present
-CREATE UNIQUE INDEX IF NOT EXISTS ux_users_telegram_id
-    ON public.users (telegram_user_id)
-    WHERE telegram_user_id IS NOT NULL;
+CREATE TRIGGER trg_users_updated
+BEFORE UPDATE ON users
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
-/* 5.2  ROLES ---------------------------------------------------------- */
+/* 6.2 ROLES ------------------------------------------------------- */
 CREATE TABLE IF NOT EXISTS roles (
-    role_id   SERIAL        PRIMARY KEY,
-    role_name VARCHAR(50)   NOT NULL UNIQUE
+    role_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    role_name VARCHAR(50) NOT NULL UNIQUE           -- 'patient', …
 );
 
+/* 6.3 USER_ROLES  (M:N) ------------------------------------------ */
 CREATE TABLE IF NOT EXISTS user_roles (
-    user_id UUID    NOT NULL
+    user_id UUID NOT NULL
         REFERENCES users(user_id) ON DELETE CASCADE,
-    role_id INTEGER NOT NULL
+    role_id UUID NOT NULL
         REFERENCES roles(role_id) ON DELETE CASCADE,
-    PRIMARY KEY (user_id, role_id)
+    PRIMARY KEY (user_id, role_id),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
 );
 
-/* 5.3  EMAILS --------------------------------------------------------- */
+CREATE TRIGGER trg_user_roles_updated
+BEFORE UPDATE ON user_roles
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+/* 6.4 E-MAILS ----------------------------------------------------- */
 CREATE TABLE IF NOT EXISTS user_emails (
-    email_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id    UUID  NOT NULL
+    email_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL
         REFERENCES users(user_id) ON DELETE CASCADE,
-    email      CITEXT NOT NULL UNIQUE,
-    is_primary BOOLEAN NOT NULL DEFAULT FALSE
+    email       CITEXT NOT NULL,
+    is_primary  BOOLEAN NOT NULL DEFAULT FALSE,
+
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT chk_user_emails_format
+        CHECK (email ~* '^[^@]+@[^@]+\\.[a-z]{2,}$')
 );
 
--- only one primary email per user
+/* cada utilizador não pode repetir o mesmo e-mail */
+CREATE UNIQUE INDEX IF NOT EXISTS ux_user_emails_per_user
+    ON user_emails(user_id, email);
+
+/* garantir um e apenas um principal por user (partial unique) */
 CREATE UNIQUE INDEX IF NOT EXISTS ux_user_emails_primary
-    ON user_emails (user_id)
+    ON user_emails(user_id)
     WHERE is_primary;
 
-/* 5.4  PHONES --------------------------------------------------------- */
+CREATE TRIGGER trg_user_emails_updated
+BEFORE UPDATE ON user_emails
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+/* 6.5 PHONES ------------------------------------------------------ */
 CREATE TABLE IF NOT EXISTS user_phones (
-    phone_id     SERIAL PRIMARY KEY,
+    phone_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id      UUID NOT NULL
         REFERENCES users(user_id) ON DELETE CASCADE,
-    phone_number VARCHAR(50) NOT NULL UNIQUE,
-    is_primary   BOOLEAN     NOT NULL DEFAULT FALSE
+    phone_number VARCHAR(20) NOT NULL,
+    is_primary   BOOLEAN NOT NULL DEFAULT FALSE,
+
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT chk_user_phones_format
+        CHECK (phone_number ~ '^\\+[1-9][0-9]{6,15}$')
 );
 
+/* mesmo nº não pode aparecer duas vezes para o mesmo user */
+CREATE UNIQUE INDEX IF NOT EXISTS ux_user_phones_per_user
+    ON user_phones(user_id, phone_number);
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_user_phones_primary
-    ON user_phones (user_id)
+    ON user_phones(user_id)
     WHERE is_primary;
 
-/* 5.5  ADDRESSES ------------------------------------------------------ */
+CREATE TRIGGER trg_user_phones_updated
+BEFORE UPDATE ON user_phones
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+/* 6.6 ADDRESSES --------------------------------------------------- */
 CREATE TABLE IF NOT EXISTS addresses (
-    address_id    SERIAL PRIMARY KEY,
-    user_id       UUID NOT NULL
+    address_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id        UUID NOT NULL
         REFERENCES users(user_id) ON DELETE CASCADE,
-    country       VARCHAR(100),
-    city          VARCHAR(100),
-    postal_code   VARCHAR(20),
-    street        VARCHAR(100),
-    street_number VARCHAR(50),
-    lat           NUMERIC(9,6),
-    lon           NUMERIC(9,6),
-    is_primary    BOOLEAN NOT NULL DEFAULT FALSE
+
+    label          TEXT,                          -- 'home', 'work', …
+    country        VARCHAR(100),
+    city           VARCHAR(100),
+    postal_code    VARCHAR(20),
+    street         VARCHAR(100),
+    street_number  VARCHAR(50),
+    latitude       NUMERIC(9,6),
+    longitude      NUMERIC(9,6),
+    is_primary     BOOLEAN NOT NULL DEFAULT FALSE,
+
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_addresses_primary
-    ON addresses (user_id)
+    ON addresses(user_id)
     WHERE is_primary;
 
-/* 5.6  CAREGIVER ↔ PATIENT ------------------------------------------- */
+CREATE TRIGGER trg_addresses_updated
+BEFORE UPDATE ON addresses
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+/* 6.7 CAREGIVER ⟷ PATIENT  (M:N) -------------------------------- */
 CREATE TABLE IF NOT EXISTS caregiver_patients (
     caregiver_id UUID NOT NULL
         REFERENCES users(user_id) ON DELETE CASCADE,
     patient_id   UUID NOT NULL
         REFERENCES users(user_id) ON DELETE CASCADE,
-    PRIMARY KEY (caregiver_id, patient_id)
+    PRIMARY KEY (caregiver_id, patient_id),
+
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
 );
 
--- trigger to enforce caregiver & patient roles
+CREATE TRIGGER trg_caregiver_patients_updated
+BEFORE UPDATE ON caregiver_patients
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+/*  trigger para garantir papéis correctos */
 CREATE OR REPLACE FUNCTION trg_check_caregiver_roles() RETURNS TRIGGER AS $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM user_roles ur
-        JOIN roles r ON r.role_id = ur.role_id
+        JOIN roles r USING(role_id)
         WHERE ur.user_id = NEW.caregiver_id
           AND r.role_name = 'caregiver'
     ) THEN
@@ -155,7 +223,7 @@ BEGIN
 
     IF NOT EXISTS (
         SELECT 1 FROM user_roles ur
-        JOIN roles r ON r.role_id = ur.role_id
+        JOIN roles r USING(role_id)
         WHERE ur.user_id = NEW.patient_id
           AND r.role_name = 'patient'
     ) THEN
@@ -169,23 +237,30 @@ $$ LANGUAGE plpgsql;
 CREATE CONSTRAINT TRIGGER check_caregiver_patient_roles
 AFTER INSERT OR UPDATE ON caregiver_patients
 DEFERRABLE INITIALLY DEFERRED
-FOR EACH ROW
-EXECUTE FUNCTION trg_check_caregiver_roles();
+FOR EACH ROW EXECUTE FUNCTION trg_check_caregiver_roles();
 
-/* 5.7  THERAPIST ↔ PATIENT ------------------------------------------- */
+/* 6.8 THERAPIST ⟷ PATIENT  (M:N) -------------------------------- */
 CREATE TABLE IF NOT EXISTS therapist_patients (
     physiotherapist_id UUID NOT NULL
         REFERENCES users(user_id) ON DELETE CASCADE,
     patient_id         UUID NOT NULL
         REFERENCES users(user_id) ON DELETE CASCADE,
-    PRIMARY KEY (physiotherapist_id, patient_id)
+    PRIMARY KEY (physiotherapist_id, patient_id),
+
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
 );
 
+CREATE TRIGGER trg_therapist_patients_updated
+BEFORE UPDATE ON therapist_patients
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+/*  trigger para garantir papel de fisioterapeuta */
 CREATE OR REPLACE FUNCTION trg_check_therapist_role() RETURNS TRIGGER AS $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM user_roles ur
-        JOIN roles r ON r.role_id = ur.role_id
+        JOIN roles r USING(role_id)
         WHERE ur.user_id = NEW.physiotherapist_id
           AND r.role_name = 'physiotherapist'
     ) THEN
@@ -198,9 +273,30 @@ $$ LANGUAGE plpgsql;
 CREATE CONSTRAINT TRIGGER check_therapist_role
 AFTER INSERT OR UPDATE ON therapist_patients
 DEFERRABLE INITIALLY DEFERRED
-FOR EACH ROW
-EXECUTE FUNCTION trg_check_therapist_role();
+FOR EACH ROW EXECUTE FUNCTION trg_check_therapist_role();
 
--------------------------------------------------------------------------
--- Done!
--------------------------------------------------------------------------
+------------------------------------------------------------------
+-- 7. Dados de arranque
+------------------------------------------------------------------
+INSERT INTO roles(role_name) VALUES
+  ('patient'),
+  ('caregiver'),
+  ('physiotherapist'),
+  ('accountant'),
+  ('administrator')
+ON CONFLICT DO NOTHING;
+
+------------------------------------------------------------------
+-- 8. Vistas auxiliares (faculta-tivo)
+------------------------------------------------------------------
+CREATE OR REPLACE VIEW v_user_roles AS
+SELECT u.user_id,
+       json_agg(r.role_name ORDER BY r.role_name) AS roles
+FROM   users u
+JOIN   user_roles ur USING(user_id)
+JOIN   roles r USING(role_id)
+GROUP  BY u.user_id;
+
+------------------------------------------------------------------
+-- Feito!            psql  -d fisina  -f fisina_setup_v2.sql
+------------------------------------------------------------------
