@@ -161,7 +161,7 @@ def create_app() -> web.Application:
         bot=bot,
         secret_token=SECRET_TOKEN,
         handle_in_background=True,
-    ).register(app, path="/telegram")
+    ).register(app, path="/")
 
     app.on_startup.append(lambda _: on_startup())
     app.on_cleanup.append(lambda _: on_shutdown())
