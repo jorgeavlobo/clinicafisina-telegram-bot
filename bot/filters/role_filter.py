@@ -1,14 +1,15 @@
 # bot/filters/role_filter.py
-from typing import Iterable, List
+from typing import Iterable, List, Any
 from aiogram.filters import BaseFilter
 from aiogram.types import TelegramObject
 
 
 class RoleFilter(BaseFilter):
     """
-    Uso:
+    Exemplo:
         @router.message(RoleFilter("administrator"))
         @router.message(RoleFilter(["patient", "caregiver"]))
+    Passa se pelo menos um papel pedido existir em data["roles"].
     """
 
     def __init__(self, roles: str | Iterable[str]) -> None:
@@ -16,13 +17,13 @@ class RoleFilter(BaseFilter):
             roles = [roles]
         self.required: List[str] = [r.lower() for r in roles]
 
-    async def __call__(                # <-- assinatura certa
+    async def __call__(           # <- kwargs!
         self,
         event: TelegramObject,
-        data: dict,                    # data vindo do middleware
+        **data: Any,
     ) -> bool:
         roles: list[str] | None = data.get("roles")
         if not roles:
-            return False               # não autenticado
+            return False
         roles = [r.lower() for r in roles]
         return any(r in roles for r in self.required)
