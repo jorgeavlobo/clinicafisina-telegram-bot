@@ -87,7 +87,7 @@ async def init_storage() -> RedisStorage:
         logger.critical("Falha ao obter ROLE: %s", exc, extra={"is_system": True})
         sys.exit(1)
 
-    if role_name = role[0].decode() if isinstance(role[0], (bytes, bytearray)) else role[0]
+    role_name = role[0].decode() if isinstance(role[0], (bytes, bytearray)) else role[0]
     if role_name != "master":
         logger.critical("Redis arrancou como réplica! ROLE=%s", role_name, extra={"is_system": True})
         sys.exit(1)
