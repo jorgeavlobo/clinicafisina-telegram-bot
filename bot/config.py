@@ -1,35 +1,55 @@
 # bot/config.py
+"""
+Carrega variáveis de ambiente e expõe-as para o resto da aplicação.
+
+Suporta dois cenários de BD:
+1. `DATABASE_URL` já definida (string completa)
+2. Variáveis granulares  DB_HOST / DB_USER / DB_PASSWORD  (gera URL)
+
+Também exporta parâmetros de webhook (domain, porta, secret token).
+"""
 
 import os
-from dotenv import load_dotenv
 from urllib.parse import quote_plus
 
-load_dotenv()          # carrega .env quando correr fora de Docker
-                       # dentro de Docker as vars já vêm do ambiente
+from dotenv import load_dotenv
+
+# ──────────────────────────────────────────────────────────────
+# Carregar .env (apenas útil fora de Docker; dentro já vem tudo)
+# ──────────────────────────────────────────────────────────────
+load_dotenv()
+
 
 def _need(key: str) -> str:
-    v = os.getenv(key)
-    if not v:
+    """Levanta RuntimeError se a variável não existir ou for vazia."""
+    value = os.getenv(key)
+    if not value:
         raise RuntimeError(f"❌ Missing config var {key}")
-    return v
+    return value
 
-# Telegram
-BOT_TOKEN = _need("BOT_TOKEN")
 
-# Base de dados
-# Se DATABASE_URL estiver definido, usa-o; senão compõe a partir dos campos simples
-DATABASE_URL = os.getenv("DATABASE_URL")
+# ───────────── Telegram ─────────────
+BOT_TOKEN: str = _need("BOT_TOKEN")
+
+# Webhook (HTTPS)
+DOMAIN: str            = _need("DOMAIN")                # ex.: telegram.fisina.pt
+WEBAPP_PORT: int       = int(os.getenv("WEBAPP_PORT", 8444))
+SECRET_TOKEN: str      = _need("TELEGRAM_SECRET_TOKEN")  # cabeçalho X-Telegram-Bot-Api-Secret-Token
+WEBHOOK_PATH: str      = f"/webhook/{BOT_TOKEN}"
+WEBHOOK_URL: str       = f"https://{DOMAIN}{WEBHOOK_PATH}"
+
+# ───────────── Base de Dados ─────────────
+DATABASE_URL: str | None = os.getenv("DATABASE_URL")
+
 if not DATABASE_URL:
     user = _need("DB_USER")
-    pw   = quote_plus(_need("DB_PASSWORD"))   # escapa ! @ / etc.
+    pw   = quote_plus(_need("DB_PASSWORD"))  # escapa ! @ / etc.
     host = _need("DB_HOST")
     port = os.getenv("DB_PORT", "5432")
     name = _need("DB_NAME")
-    ssl  = os.getenv("DB_SSLMODE", "disable")
-    DATABASE_URL = (
-        f"postgresql://{user}:{pw}@{host}:{port}/{name}?sslmode={ssl}"
-    )
+    ssl  = os.getenv("DB_SSLMODE", "disable")  # disable | require | verify-full
+    DATABASE_URL = f"postgresql://{user}:{pw}@{host}:{port}/{name}?sslmode={ssl}"
 
-# Outros parâmetros
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-TIMEZONE  = os.getenv("LOCAL_TIMEZONE", "Europe/Zurich")
+# ───────────── Opções diversas ────────────
+LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+TIMEZONE:  str = os.getenv("LOCAL_TIMEZONE", "Europe/Zurich")
