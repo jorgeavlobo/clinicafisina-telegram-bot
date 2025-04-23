@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-main.py — Clínica Fisina Telegram bot
-• Aiogram v3.20 (Dispatcher + webhook)
+main.py — Clínica Fisina Telegram bot
+• Aiogram v3.20 (Dispatcher + webhook)
 • Redis FSM storage
 • PostgreSQL structured logging
 • Webhook proxy at 127.0.0.1:8444 via Nginx
@@ -80,15 +80,16 @@ async def init_db_pools() -> None:
 async def init_storage() -> RedisStorage:
     redis = Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
 
-    # ─────── Sanity-check: garantir que o nó é master ───────
+    # ─────── Sanity‑check: garantir que o nó é master ───────
     try:
         role = await redis.execute_command("ROLE")
     except ResponseError as exc:
         logger.critical("Falha ao obter ROLE: %s", exc, extra={"is_system": True})
         sys.exit(1)
 
-    if role[0] != "master":
-        logger.critical("Redis arrancou como réplica! ROLE=%s", role[0], extra={"is_system": True})
+    if role_name = role[0].decode() if isinstance(role[0], (bytes, bytearray)) else role[0]
+    if role_name != "master":
+        logger.critical("Redis arrancou como réplica! ROLE=%s", role_name, extra={"is_system": True})
         sys.exit(1)
     # ─────────────────────────────────────────────────────────
 
