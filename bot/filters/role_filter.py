@@ -9,8 +9,6 @@ class RoleFilter(BaseFilter):
     Uso:
         @router.message(RoleFilter("administrator"))
         @router.message(RoleFilter(["patient", "caregiver"]))
-    O filtro passa se pelo menos um dos papéis pedidos existir
-    na lista 'roles' injectada pelo RoleCheckMiddleware.
     """
 
     def __init__(self, roles: str | Iterable[str]) -> None:
@@ -18,13 +16,13 @@ class RoleFilter(BaseFilter):
             roles = [roles]
         self.required: List[str] = [r.lower() for r in roles]
 
-    async def __call__(
+    async def __call__(                # <-- assinatura certa
         self,
         event: TelegramObject,
-        roles: list[str] | None = None,    # ← chega como kw-arg individual
-        **kwargs,
+        data: dict,                    # data vindo do middleware
     ) -> bool:
+        roles: list[str] | None = data.get("roles")
         if not roles:
-            return False                  # utilizador não autenticado
+            return False               # não autenticado
         roles = [r.lower() for r in roles]
         return any(r in roles for r in self.required)
