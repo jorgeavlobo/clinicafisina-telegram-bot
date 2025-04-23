@@ -6,9 +6,9 @@ from aiogram.types import TelegramObject
 
 class RoleFilter(BaseFilter):
     """
-    Uso:
-        @router.message(RoleFilter("administrator"))
-        @router.message(RoleFilter(["patient", "caregiver"]))
+    @router.message(RoleFilter("administrator"))
+    @router.message(RoleFilter(["patient", "caregiver"]))
+    Passa se qualquer dos papéis pedidos existir.
     """
 
     def __init__(self, roles: str | Iterable[str]) -> None:
@@ -16,13 +16,12 @@ class RoleFilter(BaseFilter):
             roles = [roles]
         self.required: List[str] = [r.lower() for r in roles]
 
-    async def __call__(         # ← dois posicionais: event, data
+    async def __call__(              # <- event + kwargs (NÃO há 2.º posicional)
         self,
         event: TelegramObject,
-        data: dict,             # dict injectado pelo middleware
-        **kwargs,
+        **data,
     ) -> bool:
-        roles: list[str] | None = data.get("roles")
+        roles: list[str] | None = data.get("roles")   # vem do middleware
         if not roles:
             return False
         roles = [r.lower() for r in roles]
