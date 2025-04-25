@@ -1,7 +1,10 @@
 # bot/handlers/administrator_handlers.py
 from aiogram import Router, F, exceptions
 from aiogram.filters import StateFilter
-from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    CallbackQuery, Message,
+    InlineKeyboardMarkup, InlineKeyboardButton,
+)
 from aiogram.fsm.context import FSMContext
 
 from bot.filters.role_filter import RoleFilter
@@ -12,33 +15,23 @@ router = Router(name="administrator")
 router.message.filter(RoleFilter("administrator"))
 router.callback_query.filter(RoleFilter("administrator"))
 
-
-# ────────────────────────────── helpers ──────────────────────────────
+# ───────────────────────────── helpers ──────────────────────────────
 def _agenda_kbd() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton("📆 Geral",   callback_data="agenda:geral")],
-            [InlineKeyboardButton("🩺 Escolher Fisioterapeuta", callback_data="agenda:fisios")],
-            [back_button()],
-        ]
-    )
-
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📆 Geral",               callback_data="agenda:geral")],
+        [InlineKeyboardButton(text="🩺 Escolher Fisioterapeuta", callback_data="agenda:fisios")],
+        [back_button()],
+    ])
 
 def _users_kbd() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton("🔍 Procurar", callback_data="users:search")],
-            [InlineKeyboardButton("➕ Adicionar", callback_data="users:add")],
-            [back_button()],
-        ]
-    )
-
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔍 Procurar", callback_data="users:search")],
+        [InlineKeyboardButton(text="➕ Adicionar", callback_data="users:add")],
+        [back_button()],
+    ])
 
 async def _delete_prev(bot, state: FSMContext) -> None:
-    """
-    Apaga, se ainda existir, a última mensagem de menu gravada
-    (menu_msg_id/menu_chat_id guardados no FSM pelo show_menu).
-    """
+    """Apaga, se ainda existir, a última mensagem-menu guardada no FSM."""
     data = await state.get_data()
     msg_id  = data.get("menu_msg_id")
     chat_id = data.get("menu_chat_id")
@@ -48,18 +41,16 @@ async def _delete_prev(bot, state: FSMContext) -> None:
         except exceptions.TelegramBadRequest:
             pass  # já não existe ou demasiado antiga
 
-
 async def _register_menu(state: FSMContext, msg: Message) -> None:
-    """Guarda o id da nova mensagem-menu para poder ser limpa depois."""
+    """Guarda o id da nova mensagem-menu para poder limpá-la depois."""
     await state.update_data(menu_msg_id=msg.message_id,
                             menu_chat_id=msg.chat.id)
 
-
-# ─────────────────────────── MENU PRINCIPAL ───────────────────────────
+# ─────────────────────────── MENU PRINCIPAL ─────────────────────────
 @router.callback_query(StateFilter(AdminMenuStates.MAIN), F.data == "admin:agenda")
 async def admin_to_agenda(cb: CallbackQuery, state: FSMContext) -> None:
     await cb.answer()
-    await _delete_prev(cb.bot, state)  # remove “Menu:”
+    await _delete_prev(cb.bot, state)
     await state.set_state(AdminMenuStates.AGENDA)
 
     new_msg = await cb.message.answer(
@@ -68,7 +59,6 @@ async def admin_to_agenda(cb: CallbackQuery, state: FSMContext) -> None:
         parse_mode="Markdown",
     )
     await _register_menu(state, new_msg)
-
 
 @router.callback_query(StateFilter(AdminMenuStates.MAIN), F.data == "admin:users")
 async def admin_to_users(cb: CallbackQuery, state: FSMContext) -> None:
@@ -83,19 +73,16 @@ async def admin_to_users(cb: CallbackQuery, state: FSMContext) -> None:
     )
     await _register_menu(state, new_msg)
 
-
-# ─────────────────────────────── A G E N D A ───────────────────────────────
+# ─────────────────────────────── A G E N D A ────────────────────────
 @router.callback_query(StateFilter(AdminMenuStates.AGENDA), F.data == "agenda:geral")
 async def agenda_geral(cb: CallbackQuery):
     await cb.answer("🚧 Placeholder: Agenda geral (a implementar)", show_alert=True)
-    await cb.message.delete()   # limpa teclado após escolha
-
+    await cb.message.delete()
 
 @router.callback_query(StateFilter(AdminMenuStates.AGENDA), F.data == "agenda:fisios")
 async def agenda_fisio(cb: CallbackQuery):
     await cb.answer("🚧 Placeholder: lista de fisioterapeutas (a implementar)", show_alert=True)
     await cb.message.delete()
-
 
 @router.callback_query(StateFilter(AdminMenuStates.AGENDA), F.data == "back")
 async def agenda_back(cb: CallbackQuery, state: FSMContext):
@@ -103,7 +90,6 @@ async def agenda_back(cb: CallbackQuery, state: FSMContext):
     await cb.message.delete()
     await state.set_state(AdminMenuStates.MAIN)
 
-    # recria o menu principal (já sem duplicar «Menu:»)
     from bot.menus.administrator_menu import build_menu
     new = await cb.message.answer(
         "💻 *Menu:*",
@@ -112,19 +98,16 @@ async def agenda_back(cb: CallbackQuery, state: FSMContext):
     )
     await _register_menu(state, new)
 
-
-# ────────────────────────── U T I L I Z A D O R E S ─────────────────────────
+# ────────────────────────── U T I L I Z A D O R E S ──────────────────
 @router.callback_query(StateFilter(AdminMenuStates.USERS), F.data == "users:search")
 async def users_search(cb: CallbackQuery):
     await cb.answer("🚧 Placeholder: pesquisa de utilizadores", show_alert=True)
     await cb.message.delete()
 
-
 @router.callback_query(StateFilter(AdminMenuStates.USERS), F.data == "users:add")
 async def users_add(cb: CallbackQuery):
     await cb.answer("🚧 Placeholder: adicionar utilizador", show_alert=True)
     await cb.message.delete()
-
 
 @router.callback_query(StateFilter(AdminMenuStates.USERS), F.data == "back")
 async def users_back(cb: CallbackQuery, state: FSMContext):
