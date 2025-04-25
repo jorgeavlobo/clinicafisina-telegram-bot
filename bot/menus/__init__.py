@@ -1,19 +1,18 @@
-# bot/menus/__init__.py
 """
-Mostra o teclado principal adequado ao papel activo.
-Quando o menu é reenviado, remove (ou edita) o anterior para não gerar
-linhas “Menu:” repetidas.  Guarda o id da última mensagem em FSM.
+Mostra o teclado principal adequado ao papel activo
+(e escolhe papel quando o utilizador tem vários).
 """
 from aiogram import Bot, exceptions
 from aiogram.types import (
-    InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
+    InlineKeyboardButton, InlineKeyboardMarkup,
+    ReplyKeyboardRemove
 )
 from aiogram.fsm.context import FSMContext
 
-from bot.states.menu_states import MenuStates
-from bot.states.admin_menu_states import AdminMenuStates
+from bot.states.menu_states        import MenuStates
+from bot.states.admin_menu_states  import AdminMenuStates  # 🆕
 
-# builders individuais
+# import builders
 from .patient_menu         import build_menu as _patient
 from .caregiver_menu       import build_menu as _caregiver
 from .physiotherapist_menu import build_menu as _physio
@@ -28,7 +27,6 @@ _ROLE_MENU = {
     "administrator":   _admin,
 }
 
-
 def _choose_role_kbd(roles: list[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -36,7 +34,6 @@ def _choose_role_kbd(roles: list[str]) -> InlineKeyboardMarkup:
             for r in roles
         ]
     )
-
 
 async def _purge_old_menu(bot: Bot, state: FSMContext) -> None:
     """
@@ -50,9 +47,8 @@ async def _purge_old_menu(bot: Bot, state: FSMContext) -> None:
         try:
             await bot.delete_message(chat_id, msg_id)
         except exceptions.TelegramBadRequest:
-            # já não existe ou demasiado antiga → ignora
+            # já não existe ou mensagem demasiado antiga → ignora
             pass
-
 
 async def show_menu(
     bot: Bot,
@@ -82,7 +78,7 @@ async def show_menu(
         if len(roles) == 1:
             active = roles[0]
         else:
-            # pedir escolha
+            # pedir escolha de perfil quando há múltiplos
             await _purge_old_menu(bot, state)
             msg = await bot.send_message(
                 chat_id,
@@ -97,7 +93,7 @@ async def show_menu(
     # guardar escolha
     await state.update_data(active_role=active)
 
-    # ── builder para o papel ──────────────────────────────────
+    # ── obter builder para o papel ─────────────────────────────
     builder = _ROLE_MENU.get(active)
     if builder is None:
         await bot.send_message(
@@ -115,17 +111,16 @@ async def show_menu(
         if active == "administrator"
         else f"👤 *{active.title()}* – menu principal"
     )
-
     msg = await bot.send_message(
         chat_id,
         text,
         reply_markup=builder(),
         parse_mode="Markdown",
     )
-    # guarda id p/ próxima limpeza
+    # guarda id da mensagem para próxima limpeza
     await state.update_data(menu_msg_id=msg.message_id,
                             menu_chat_id=chat_id)
 
-    # se for administrador, coloca-nos no estado MAIN
+    # se for administrador, actualiza estado FSM para MAIN (menu admin)
     if active == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
