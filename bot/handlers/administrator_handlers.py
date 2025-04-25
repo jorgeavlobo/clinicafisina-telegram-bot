@@ -25,9 +25,11 @@ router.callback_query.filter(RoleFilter("administrator"))  # acesso restrito
 def _agenda_kbd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton("📆 Geral",   callback_data="agenda:geral")],
-            [InlineKeyboardButton("🩺 Escolher Fisioterapeuta",
-                                  callback_data="agenda:fisios")],
+            [InlineKeyboardButton(text="📆 Geral",   callback_data="agenda:geral")],
+            [InlineKeyboardButton(
+                text="🩺 Escolher Fisioterapeuta",
+                callback_data="agenda:fisios",
+            )],
             [back_button()],
         ]
     )
@@ -35,8 +37,8 @@ def _agenda_kbd() -> InlineKeyboardMarkup:
 def _users_kbd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton("🔍 Procurar", callback_data="users:search")],
-            [InlineKeyboardButton("➕ Adicionar", callback_data="users:add")],
+            [InlineKeyboardButton(text="🔍 Procurar", callback_data="users:search")],
+            [InlineKeyboardButton(text="➕ Adicionar", callback_data="users:add")],
             [back_button()],
         ]
     )
@@ -153,3 +155,4 @@ async def users_router(cb: CallbackQuery, state: FSMContext):
 
     # apagar menu depois do placeholder
     await _close_menu(cb, state)
+``` :contentReference[oaicite:0]{index=0}&#8203;:contentReference[oaicite:1]{index=1}
