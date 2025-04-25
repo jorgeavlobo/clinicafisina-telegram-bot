@@ -3,19 +3,12 @@
 Handlers do menu de Administrador.
 
 • Garante que só o *menu actualmente activo* responde aos cliques.
-• Depois de um placeholder, remove o menu para evitar clutter.
-• Se o utilizador abrir um novo submenu, o anterior é apagado,
-  mantendo-se apenas o mais recente.
+• Depois de uma opção-placeholder, remove o menu para evitar clutter.
 """
-from __future__ import annotations
 
 from aiogram import Router, F, exceptions
 from aiogram.filters import StateFilter
-from aiogram.types import (
-    CallbackQuery,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-)
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
 from bot.filters.role_filter import RoleFilter
@@ -23,17 +16,24 @@ from bot.states.admin_menu_states import AdminMenuStates
 from bot.menus.common import back_button
 
 router = Router(name="administrator")
-router.callback_query.filter(RoleFilter("administrator"))
+router.callback_query.filter(RoleFilter("administrator"))   # acesso restrito a admins
 
-# ────────────────────────────── builders ──────────────────────────────
+
+# ───────────────────────── helpers de teclados ─────────────────────────
 def _agenda_kbd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📆 Geral",               callback_data="agenda:geral")],
-            [InlineKeyboardButton(text="🩺 Escolher Fisioterapeuta", callback_data="agenda:fisios")],
+            [InlineKeyboardButton(text="📆 Geral", callback_data="agenda:geral")],
+            [
+                InlineKeyboardButton(
+                    text="🩺 Escolher Fisioterapeuta",
+                    callback_data="agenda:fisios",
+                )
+            ],
             [back_button()],
         ]
     )
+
 
 def _users_kbd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -44,109 +44,119 @@ def _users_kbd() -> InlineKeyboardMarkup:
         ]
     )
 
-# ─────────────────── helpers: menu activo & limpeza ───────────────────
-async def _ensure_active_main(cb: CallbackQuery, state: FSMContext) -> bool:
-    """True se o clique ocorreu no *menu principal* mais recente."""
-    data = await state.get_data()
-    return cb.message.message_id == data.get("menu_msg_id")
 
-async def _ensure_active_sub(cb: CallbackQuery, state: FSMContext) -> bool:
-    """True se o clique ocorreu no *submenu* (Agenda/Users) mais recente."""
+# ───────────────────── utilidades: menu activo & fechar ─────────────────────
+async def _ensure_active_menu(cb: CallbackQuery, state: FSMContext) -> bool:
+    """
+    Devolve True se o menu onde o clique ocorreu é o último menu
+    mostrado pela bot; caso contrário mostra alerta e ignora.
+    """
     data = await state.get_data()
-    return cb.message.message_id == data.get("admin_msg_id")
-
-async def _purge_prev_submenu(cb: CallbackQuery, state: FSMContext) -> None:
-    """Apaga o último submenu caso exista (id guardado em admin_msg_id)."""
-    data = await state.get_data()
-    old_id: int | None = data.get("admin_msg_id")
-    if old_id:
+    if cb.message.message_id != data.get("menu_msg_id"):
         try:
-            await cb.bot.delete_message(cb.message.chat.id, old_id)
+            await cb.answer(
+                "⚠️ Este menu já não está activo. Use /start para abrir um novo.",
+                show_alert=True,
+            )
         except exceptions.TelegramBadRequest:
-            pass                    # já não existe ou demasiado antiga
+            pass
+        return False
+    return True
 
-async def _send_submenu(
-    cb: CallbackQuery,
-    state: FSMContext,
-    text: str,
-    kbd: InlineKeyboardMarkup,
-) -> None:
-    """Remove submenu anterior, apaga a msg do botão clicado e envia novo submenu."""
-    await _purge_prev_submenu(cb, state)
-    try:
-        await cb.message.delete()          # apaga a msg do menu principal
-    except exceptions.TelegramBadRequest:
-        pass
-    msg = await cb.message.answer(text, reply_markup=kbd, parse_mode="Markdown")
-    await state.update_data(admin_msg_id=msg.message_id)
 
-async def _close_submenu(cb: CallbackQuery, state: FSMContext) -> None:
-    """Apaga o submenu actual após placeholder."""
+async def _close_menu(cb: CallbackQuery, state: FSMContext) -> None:
+    """Apaga a mensagem-menu actual e limpa as chaves menu_* do FSM."""
     try:
         await cb.message.delete()
     except exceptions.TelegramBadRequest:
         pass
-    await state.update_data(admin_msg_id=None)
+    await state.update_data(menu_msg_id=None, menu_chat_id=None)
 
-# ─────────────────────── MENU PRINCIPAL ───────────────────────────────
+
+# ─────────────────────── MENU PRINCIPAL (Agenda / Utilizadores) ──────────────
 @router.callback_query(
     StateFilter(AdminMenuStates.MAIN),
-    F.data.in_({"admin:agenda", "admin:users"}),
+    F.data.in_(["admin:agenda", "admin:users"]),
 )
-async def admin_main_nav(cb: CallbackQuery, state: FSMContext) -> None:
-    if not await _ensure_active_main(cb, state):
-        # menu principal antigo → avisa
-        await cb.answer(
-            "⚠️ Este menu já não está activo. Use /start para abrir um novo.",
-            show_alert=True,
-        )
+async def admin_main_nav(cb: CallbackQuery, state: FSMContext):
+    if not await _ensure_active_menu(cb, state):
         return
 
     await cb.answer()
+
     if cb.data == "admin:agenda":
         await state.set_state(AdminMenuStates.AGENDA)
-        await _send_submenu(cb, state, "📅 *Agenda* — seleccione uma opção:", _agenda_kbd())
-    else:
+        await cb.message.edit_text(
+            "📅 *Agenda* — seleccione uma opção:",
+            reply_markup=_agenda_kbd(),
+            parse_mode="Markdown",
+        )
+    else:  # admin:users
         await state.set_state(AdminMenuStates.USERS)
-        await _send_submenu(cb, state, "👥 *Utilizadores* — seleccione uma opção:", _users_kbd())
+        await cb.message.edit_text(
+            "👥 *Utilizadores* — seleccione uma opção:",
+            reply_markup=_users_kbd(),
+            parse_mode="Markdown",
+        )
 
-# ────────────────────────────── AGENDA ────────────────────────────────
-@router.callback_query(StateFilter(AdminMenuStates.AGENDA) & F.data == "back")
-async def agenda_back(cb: CallbackQuery, state: FSMContext) -> None:
-    if not await _ensure_active_sub(cb, state):
-        await cb.answer("⚠️ Este menu já expirou.", show_alert=True)
-        return
-    await cb.answer()
-    # regressa ao menu principal (Agenda)
-    from bot.menus.administrator_menu import build_menu
-    await state.set_state(AdminMenuStates.MAIN)
-    await _close_submenu(cb, state)          # remove submenu
-    await cb.message.answer("💻 *Menu:*", reply_markup=build_menu(), parse_mode="Markdown")
 
-@router.callback_query(StateFilter(AdminMenuStates.AGENDA) & F.data.in_({"agenda:geral", "agenda:fisios"}))
-async def agenda_placeholders(cb: CallbackQuery, state: FSMContext) -> None:
-    if not await _ensure_active_sub(cb, state):
-        await cb.answer("⚠️ Este menu já expirou.", show_alert=True)
+# ──────────────────────────── AGENDA ─────────────────────────────────────────
+@router.callback_query(StateFilter(AdminMenuStates.AGENDA))
+async def agenda_router(cb: CallbackQuery, state: FSMContext):
+    if not await _ensure_active_menu(cb, state):
         return
-    await cb.answer("🚧 Placeholder – em desenvolvimento", show_alert=True)
-    await _close_submenu(cb, state)
 
-# ─────────────────────────── UTILIZADORES ─────────────────────────────
-@router.callback_query(StateFilter(AdminMenuStates.USERS) & F.data == "back")
-async def users_back(cb: CallbackQuery, state: FSMContext) -> None:
-    if not await _ensure_active_sub(cb, state):
-        await cb.answer("⚠️ Este menu já expirou.", show_alert=True)
-        return
-    await cb.answer()
-    from bot.menus.administrator_menu import build_menu
-    await state.set_state(AdminMenuStates.MAIN)
-    await _close_submenu(cb, state)
-    await cb.message.answer("💻 *Menu:*", reply_markup=build_menu(), parse_mode="Markdown")
+    action = cb.data
 
-@router.callback_query(StateFilter(AdminMenuStates.USERS) & F.data.in_({"users:search", "users:add"}))
-async def users_placeholders(cb: CallbackQuery, state: FSMContext) -> None:
-    if not await _ensure_active_sub(cb, state):
-        await cb.answer("⚠️ Este menu já expirou.", show_alert=True)
+    if action == "back":
+        from bot.menus.administrator_menu import build_menu
+
+        await state.set_state(AdminMenuStates.MAIN)
+        await cb.message.edit_text(
+            "💻 *Menu:*", reply_markup=build_menu(), parse_mode="Markdown"
+        )
+        await cb.answer()
         return
-    await cb.answer("🚧 Placeholder – em desenvolvimento", show_alert=True)
-    await _close_submenu(cb, state)
+
+    # Placeholders ------------------------------------------------------------
+    if action == "agenda:geral":
+        await cb.answer("🚧 (placeholder) Agenda geral", show_alert=True)
+    elif action == "agenda:fisios":
+        await cb.answer("🚧 (placeholder) Lista de fisioterapeutas", show_alert=True)
+    else:
+        await cb.answer("❗ Opção não reconhecida", show_alert=True)
+        return
+
+    # Após placeholder, fecha-se o menu
+    await _close_menu(cb, state)
+
+
+# ─────────────────────────── UTILIZADORES ────────────────────────────────────
+@router.callback_query(StateFilter(AdminMenuStates.USERS))
+async def users_router(cb: CallbackQuery, state: FSMContext):
+    if not await _ensure_active_menu(cb, state):
+        return
+
+    action = cb.data
+
+    if action == "back":
+        from bot.menus.administrator_menu import build_menu
+
+        await state.set_state(AdminMenuStates.MAIN)
+        await cb.message.edit_text(
+            "💻 *Menu:*", reply_markup=build_menu(), parse_mode="Markdown"
+        )
+        await cb.answer()
+        return
+
+    # Placeholders ------------------------------------------------------------
+    if action == "users:search":
+        await cb.answer("🚧 (placeholder) Pesquisa de utilizadores", show_alert=True)
+    elif action == "users:add":
+        await cb.answer("🚧 (placeholder) Adicionar utilizador", show_alert=True)
+    else:
+        await cb.answer("❗ Opção não reconhecida", show_alert=True)
+        return
+
+    # Após placeholder, fecha-se o menu
+    await _close_menu(cb, state)
