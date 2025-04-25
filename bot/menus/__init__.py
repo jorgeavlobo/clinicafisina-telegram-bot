@@ -1,3 +1,4 @@
+# bot/menus/__init__.py
 """
 Mostra o teclado principal adequado ao papel activo
 (e escolhe papel quando o utilizador tem vários).
