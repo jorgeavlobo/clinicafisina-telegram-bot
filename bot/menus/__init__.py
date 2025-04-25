@@ -6,19 +6,19 @@ Mostra o teclado principal adequado ao papel activo
 from aiogram import Bot
 from aiogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup,
-    ReplyKeyboardRemove, Message
+    ReplyKeyboardRemove
 )
 from aiogram.fsm.context import FSMContext
 
-from bot.states.menu_states import MenuStates
-from bot.states.admin_menu_states import AdminMenuStates  # 🆕 para set_state
+from bot.states.menu_states        import MenuStates
+from bot.states.admin_menu_states  import AdminMenuStates  # 🆕
 
 # import builders
-from .patient_menu        import build_menu as _patient
-from .caregiver_menu      import build_menu as _caregiver
+from .patient_menu         import build_menu as _patient
+from .caregiver_menu       import build_menu as _caregiver
 from .physiotherapist_menu import build_menu as _physio
-from .accountant_menu     import build_menu as _accountant
-from .administrator_menu  import build_menu as _admin
+from .accountant_menu      import build_menu as _accountant
+from .administrator_menu   import build_menu as _admin
 
 _ROLE_MENU = {
     "patient":         _patient,
@@ -36,7 +36,7 @@ def _choose_role_kbd(roles: list[str]) -> InlineKeyboardMarkup:
         ]
     )
 
-# ──────────────────────────────────────────────────────────
+# ───────────────────────────────────────────────────────────
 async def show_menu(
     bot: Bot,
     chat_id: int,
@@ -45,12 +45,13 @@ async def show_menu(
     requested: str | None = None,
 ) -> None:
     """
-    Envia (ou actualiza) o main-menu correcto.
-    • Se não houver papéis → avisa e termina
+    Envia (ou actualiza) o main-menu correcto
+    • Se não houver papéis → avisa
     • Se houver vários → pede escolha
     • Para 'administrator' mostra já o inline-menu Agenda / Utilizadores
     """
-    # 0) sem papéis
+
+    # 0) — sem papéis
     if not roles:
         await bot.send_message(
             chat_id,
@@ -61,7 +62,7 @@ async def show_menu(
         await state.clear()
         return
 
-    # 1) determinar papel activo
+    # 1) — determinar papel activo
     active = requested or (await state.get_data()).get("active_role")
 
     if not active:
@@ -78,7 +79,7 @@ async def show_menu(
 
     await state.update_data(active_role=active)
 
-    # 2) obter builder
+    # 2) — obter builder
     builder = _ROLE_MENU.get(active)
     if builder is None:
         await bot.send_message(
@@ -88,9 +89,9 @@ async def show_menu(
         )
         return
 
-    # 3) Administrator → inline-keyboard logo à cabeça
+    # 3) — administrador → inline-keyboard
     if active == "administrator":
-        await state.set_state(AdminMenuStates.MAIN, ttl=60)
+        await state.set_state(AdminMenuStates.MAIN)    # 👈 removido ttl=60
         await bot.send_message(
             chat_id,
             "💻 *Menu:*",
@@ -99,7 +100,7 @@ async def show_menu(
         )
         return
 
-    # 4) Outros perfis → reply-keyboard normal
+    # 4) — restantes perfis → reply-keyboard
     await bot.send_message(
         chat_id,
         f"👤 *{active.title()}* – menu principal",
