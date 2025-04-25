@@ -10,9 +10,12 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
 def build_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🗓 Agenda",       callback_data="adm:agenda"),
-            InlineKeyboardButton(text="👥 Utilizadores", callback_data="adm:users"),
+    """
+    Teclado inline principal do Administrador.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🗓 Agenda",      callback_data="admin:agenda")],
+            [InlineKeyboardButton(text="👥 Utilizadores", callback_data="admin:users")],
         ]
-    ])
+    )
