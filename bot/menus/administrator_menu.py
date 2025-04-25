@@ -1,11 +1,18 @@
 # bot/menus/administrator_menu.py
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+"""
+Constrói **inline-keyboard** do menu principal de Administrador.
 
-def build_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="👤 Utilizadores")],
-            [KeyboardButton(text="⚙️ Sistema")],
-        ],
-        resize_keyboard=True,
-    )
+É mostrado logo após /start quando o papel activo é «administrator».
+As callbacks começam sempre por  adm:  para serem tratadas no
+administrator_handlers.py
+"""
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+
+def build_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🗓 Agenda",       callback_data="adm:agenda"),
+            InlineKeyboardButton(text="👥 Utilizadores", callback_data="adm:users"),
+        ]
+    ])
