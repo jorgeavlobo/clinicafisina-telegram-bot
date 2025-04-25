@@ -1,13 +1,14 @@
-# bot/handlers/auth_handlers.py
 """
 Handlers de autenticação (/start + onboarding).
 
 • Se o utilizador já estiver ligado, mostra imediatamente o menu
   (apagando o menu anterior caso exista).
 • Se não estiver ligado, inicia o fluxo de onboarding (pedir contacto).
+• A mensagem com o próprio comando “/start” é removida para que o chat
+  fique limpo – aplica-se em qualquer dos cenários acima.
 """
 
-from aiogram import Router, F
+from aiogram import Router, F, exceptions
 from aiogram.filters import CommandStart, StateFilter
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -24,18 +25,33 @@ router = Router(name="auth")
 # ───────────────────────────── /start ─────────────────────────────
 @router.message(CommandStart())
 async def start(message: Message, state: FSMContext) -> None:
+    """
+    Trata o /start:
+
+    1. Se já existir ligação → limpa FSM (preservando o id do menu
+       anterior, se existir), de seguida mostra o menu principal.
+    2. Caso contrário → inicia o fluxo de onboarding (pedir contacto).
+    3. Em ambos os casos remove do chat a mensagem “/start” para
+       evitar clutter.
+    """
+    # 3.1  — apaga a própria mensagem /start (ignora erros se, p.ex.,
+    #        o bot não tiver permissão para apagar mensagens alheias)
+    try:
+        await message.delete()
+    except exceptions.TelegramBadRequest:
+        # sem permissões ou mensagem demasiado antiga – continua
+        pass
+
     pool = await get_pool()
     user = await q.get_user_by_telegram_id(pool, message.from_user.id)
 
     if user:
         roles = await q.get_user_roles(pool, user["user_id"])
 
-        # ▸ preserva o id do menu anterior (se existir)
+        # ── limpa FSM mas preserva id do último menu ──
         data           = await state.get_data()
         last_menu_id   = data.get("menu_msg_id")
         last_menu_chat = data.get("menu_chat_id")
-
-        # limpa o restante FSM
         await state.clear()
 
         if last_menu_id and last_menu_chat:
@@ -44,7 +60,7 @@ async def start(message: Message, state: FSMContext) -> None:
                 menu_chat_id = last_menu_chat,
             )
 
-        # show_menu() apagará o menu velho antes de enviar o novo
+        # show_menu() apagará o menu velho (se ainda existir)
         await show_menu(
             bot     = message.bot,
             chat_id = message.chat.id,
@@ -52,7 +68,7 @@ async def start(message: Message, state: FSMContext) -> None:
             roles   = roles,
         )
     else:
-        # ainda não está ligado → inicia onboarding
+        # não ligado → inicia onboarding (pedir contacto)
         await flow.start_onboarding(message, state)
 
 # ───────────────────── contacto partilhado ──────────────────────
