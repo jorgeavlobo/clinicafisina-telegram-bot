@@ -2,17 +2,19 @@
 """
 Mostra o teclado principal adequado ao papel activo
 (e escolhe papel quando o utilizador tem vários).
-Remove sempre o menu anterior e agenda-lhe um timeout de 60 s.
 """
 from aiogram import Bot, exceptions
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
+from aiogram.types import (
+    InlineKeyboardButton, InlineKeyboardMarkup,
+    ReplyKeyboardRemove
+)
 from aiogram.fsm.context import FSMContext
 
 from bot.states.menu_states       import MenuStates
 from bot.states.admin_menu_states import AdminMenuStates
-from .common import start_menu_timeout                 # ← util p/ timeout
+from .common                      import start_menu_timeout   # ← timeout
 
-# builders -----------------------------------------------------------------
+# builders individuais
 from .patient_menu         import build_menu as _patient
 from .caregiver_menu       import build_menu as _caregiver
 from .physiotherapist_menu import build_menu as _physio
@@ -27,7 +29,6 @@ _ROLE_MENU = {
     "administrator":   _admin,
 }
 
-# --------------------------------------------------------------------------
 def _choose_role_kbd(roles: list[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -44,9 +45,8 @@ async def _purge_old_menu(bot: Bot, state: FSMContext) -> None:
         try:
             await bot.delete_message(chat_id, msg_id)
         except exceptions.TelegramBadRequest:
-            pass                                  # já não existe / demasiado antiga
+            pass
 
-# --------------------------------------------------------------------------
 async def show_menu(
     bot: Bot,
     chat_id: int,
@@ -55,7 +55,7 @@ async def show_menu(
     requested: str | None = None,
 ) -> None:
 
-    # ───── sem papéis ────────────────────────────────────────────────────
+    # ── sem papéis ─────────────────────────────────────────────
     if not roles:
         await bot.send_message(
             chat_id,
@@ -66,7 +66,7 @@ async def show_menu(
         await state.clear()
         return
 
-    # ───── papel activo ─────────────────────────────────────────────────
+    # ── determinar papel activo ───────────────────────────────
     active = requested or (await state.get_data()).get("active_role")
     if not active:
         if len(roles) == 1:
@@ -81,13 +81,14 @@ async def show_menu(
             await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
             await state.update_data(menu_msg_id=msg.message_id,
                                     menu_chat_id=chat_id)
-            # agenda timeout nesse selector também
-            start_menu_timeout(bot, msg, state)         # FIX
+            # ▸ inicia timeout
+            start_menu_timeout(bot, msg, state)
             return
 
+    # guardar escolha
     await state.update_data(active_role=active)
 
-    # ───── builder ──────────────────────────────────────────────────────
+    # ── builder para o papel ──────────────────────────────────
     builder = _ROLE_MENU.get(active)
     if builder is None:
         await bot.send_message(
@@ -97,19 +98,21 @@ async def show_menu(
         )
         return
 
-    # ───── apaga antigo e envia novo ────────────────────────────────────
+    # ── remove menu anterior e envia o novo ───────────────────
     await _purge_old_menu(bot, state)
 
-    text = "💻 *Menu:*" if active == "administrator" \
-           else f"👤 *{active.title()}* – menu principal"
-
-    msg = await bot.send_message(
-        chat_id, text, reply_markup=builder(), parse_mode="Markdown"
+    text = "💻 *Menu:*" if active == "administrator" else f"👤 *{active.title()}* – menu principal"
+    msg  = await bot.send_message(
+        chat_id,
+        text,
+        reply_markup=builder(),
+        parse_mode="Markdown",
     )
     await state.update_data(menu_msg_id=msg.message_id,
                             menu_chat_id=chat_id)
 
-    start_menu_timeout(bot, msg, state)                  # FIX
+    # ▸ inicia / reinicia timeout de 60 s
+    start_menu_timeout(bot, msg, state)
 
     if active == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
