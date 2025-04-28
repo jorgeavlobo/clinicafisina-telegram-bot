@@ -5,6 +5,7 @@ Entry point for the Telegram bot application.
 - Initializes bot, middlewares, and routers
 - Sets up webhook server using aiohttp
 - Handles graceful shutdown
+- Adds custom HTTP endpoints (/healthz, /ping)
 """
 
 import asyncio
@@ -59,6 +60,8 @@ async def main() -> None:
     logging.info("Webhook registado em %s", WEBHOOK_URL)
 
     app = web.Application()
+
+    # Webhook handler for Telegram
     SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
@@ -67,6 +70,17 @@ async def main() -> None:
 
     setup_application(app, dp)
 
+    # ─────────── Custom HTTP Handlers (/healthz, /ping) ───────────
+    async def healthz(request):
+        return web.Response(text="OK", status=200)
+
+    async def ping(request):
+        return web.Response(text="Pong", status=200)
+
+    app.router.add_get("/healthz", healthz)
+    app.router.add_get("/ping", ping)
+
+    # ─────────── Start aiohttp Server ───────────
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, host="0.0.0.0", port=WEBAPP_PORT).start()
