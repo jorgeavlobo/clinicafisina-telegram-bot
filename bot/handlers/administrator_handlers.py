@@ -2,14 +2,14 @@
 """
 Handlers do menu de Administrador
 
-• garante que só o menu activo responde
+• garante que só o menu activo responde  (usa menu_guard.py)
 • timeout de 60 s nos sub-menus
 • botão «Voltar» regressa ao menu principal
 • fallback avisa sempre que se clica num menu antigo
 """
 from __future__ import annotations
 
-from aiogram import Router, F, exceptions
+from aiogram import Router, F
 from aiogram.filters import StateFilter
 from aiogram.types import (
     CallbackQuery,
@@ -20,8 +20,14 @@ from aiogram.fsm.context import FSMContext
 
 from bot.filters.role_filter      import RoleFilter
 from bot.states.admin_menu_states import AdminMenuStates
-from bot.menus.common             import back_button, start_menu_timeout
+from bot.menus.common             import back_button
 from bot.menus.administrator_menu import build_menu as _main_menu_kbd
+
+# ← utilitários genéricos partilhados
+from bot.handlers.menu_guard import (
+    is_active_menu,     # verifica se o clique pertence ao menu activo
+    replace_menu,       # substitui / recria a mensagem-menu + timeout
+)
 
 router = Router(name="administrator")
 router.callback_query.filter(RoleFilter("administrator"))
@@ -66,38 +72,11 @@ def _users_kbd() -> InlineKeyboardMarkup:
         ]
     )
 
-# ───────────────────────── helpers ───────────────────────────────────
-async def _is_active(cb: CallbackQuery, state: FSMContext) -> bool:
-    """True se o clique ocorreu no último menu enviado pela bot."""
-    data = await state.get_data()
-    return cb.message.message_id == data.get("menu_msg_id")
-
-
-async def _replace_menu(
-    cb: CallbackQuery,
-    state: FSMContext,
-    text: str,
-    kbd: InlineKeyboardMarkup,
-) -> None:
-    """
-    Troca o menu ‘inline’, mantendo a mesma mensagem sempre que possível,
-    actualizando menu_msg_id no FSM e (re)iniciando o timeout.
-    """
-    try:
-        await cb.message.edit_text(text, reply_markup=kbd, parse_mode="Markdown")
-        msg = cb.message
-    except exceptions.TelegramBadRequest:
-        await cb.message.delete()
-        msg = await cb.message.answer(text, reply_markup=kbd, parse_mode="Markdown")
-        await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
-
-    start_menu_timeout(cb.bot, msg, state)  # (re)arma o timeout de 60 s
-
-
+# ───────────────────────── helpers locais ────────────────────────────
 async def _show_main_menu(cb: CallbackQuery, state: FSMContext) -> None:
     """Volta ao menu principal ‹Agenda / Utilizadores›."""
     await state.set_state(AdminMenuStates.MAIN)
-    await _replace_menu(cb, state, "💻 *Menu:*", _main_menu_kbd())
+    await replace_menu(cb, state, "💻 *Menu:*", _main_menu_kbd())
 
 # ─────────────────────────── MAIN nav ────────────────────────────────
 @router.callback_query(
@@ -105,7 +84,8 @@ async def _show_main_menu(cb: CallbackQuery, state: FSMContext) -> None:
     F.data.in_(("admin:agenda", "admin:users")),
 )
 async def main_nav(cb: CallbackQuery, state: FSMContext):
-    if not await _is_active(cb, state):
+    if not await is_active_menu(cb, state):
+        # menu antigo  →  avisa e ignora
         await cb.answer("⚠️ Este menu já não está activo.", show_alert=True)
         return
 
@@ -113,10 +93,10 @@ async def main_nav(cb: CallbackQuery, state: FSMContext):
 
     if cb.data == "admin:agenda":
         await state.set_state(AdminMenuStates.AGENDA)
-        await _replace_menu(cb, state, "📅 *Agenda* — seleccione:", _agenda_kbd())
+        await replace_menu(cb, state, "📅 *Agenda* — seleccione:", _agenda_kbd())
     else:
         await state.set_state(AdminMenuStates.USERS)
-        await _replace_menu(cb, state, "👥 *Utilizadores* — seleccione:", _users_kbd())
+        await replace_menu(cb, state, "👥 *Utilizadores* — seleccione:", _users_kbd())
 
 # ───────────────────────────── Agenda ────────────────────────────────
 @router.callback_query(
@@ -124,13 +104,13 @@ async def main_nav(cb: CallbackQuery, state: FSMContext):
     F.data.in_(("agenda:geral", "agenda:fisios")),
 )
 async def agenda_placeholders(cb: CallbackQuery, state: FSMContext):
-    if not await _is_active(cb, state):
+    if not await is_active_menu(cb, state):
         await cb.answer("⚠️ Este menu já não está activo.", show_alert=True)
         return
 
     await cb.answer("🚧 Placeholder – em desenvolvimento", show_alert=True)
     await cb.message.delete()
-    await state.update_data(menu_msg_id=None, menu_chat_id=None)
+    await state.update_data(menu_msg_id=None, menu_chat_id=None)  # fica sem menu activo
 
 
 @router.callback_query(StateFilter(AdminMenuStates.AGENDA), F.data == "back")
@@ -144,7 +124,7 @@ async def agenda_back(cb: CallbackQuery, state: FSMContext):
     F.data.in_(("users:search", "users:add")),
 )
 async def users_placeholders(cb: CallbackQuery, state: FSMContext):
-    if not await _is_active(cb, state):
+    if not await is_active_menu(cb, state):
         await cb.answer("⚠️ Este menu já não está activo.", show_alert=True)
         return
 
@@ -164,10 +144,9 @@ async def users_back(cb: CallbackQuery, state: FSMContext):
     F.data.startswith(("admin:", "agenda:", "users:")),
 )
 async def old_menu_clicked(cb: CallbackQuery):
-    """Dispara quando o utilizador clica num menu que já não está activo."""
+    """Clicou-se num menu que já não é válido (nenhum activo no FSM)."""
     await cb.answer(
         "⚠️ Este menu já não está activo.\n"
         "Envie /start ou pressione *Menu* para abrir um novo.",
         show_alert=True,
     )
-
