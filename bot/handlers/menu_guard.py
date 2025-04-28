@@ -1,72 +1,70 @@
 # bot/handlers/menu_guard.py
 """
-menu_guard.py  –  utilitário genérico para todos os handlers inline-menu
-────────────────────────────────────────────────────────────────────────
-
-Funções de apoio (não é um Router):
-
-• is_active(cb, state)          → True se o callback pertence ao menu
-  actualmente activo (id guardado em FSM).
-
-• replace_menu(cb, state, ...)  → substitui / envia o teclado-inline,
-  actualiza FSM (menu_msg_id, menu_chat_id) e arma/rearma o timeout
-  de 60 s através de bot.menus.common.start_menu_timeout.
-
-• close_menu(cb, state)         → apaga o menu activo e limpa as chaves
-  do FSM.
-
-Todas as funções são _framework-agnostic_; qualquer handler que trabalhe
-com menus inline pode importá-las.
+Funções utilitárias e “router” genérico que:
+• garante que apenas o último menu inline permanece activo;
+• repõe/actualiza o menu (com timeout de 60 s);
+• intercepta cliques em menus antigos e mostra um pop-up.
 """
 from __future__ import annotations
 
-from aiogram import exceptions
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup
+from aiogram import Router, exceptions
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import CancelHandler   # para abortar propagação
 
 from bot.menus.common import start_menu_timeout
 
+router = Router(name="menu_guard")            # router genérico — inclui fallback
 
-# ───────────────────────── verificações ──────────────────────────
-async def is_active(cb: CallbackQuery, state: FSMContext) -> bool:
-    """
-    Devolve *True* se o clique foi feito no último menu registado
-    (menu_msg_id guardado em FSM);  caso contrário *False*.
-    """
+
+# ───────────────────────── helpers reutilizáveis ──────────────────────────
+async def is_active_menu(cb: CallbackQuery, state: FSMContext) -> bool:
+    """True se o clique ocorreu no último menu registado no FSM."""
     data = await state.get_data()
     return cb.message.message_id == data.get("menu_msg_id")
 
 
-# ───────────────────────── acções sobre o menu ───────────────────
 async def replace_menu(
     cb: CallbackQuery,
     state: FSMContext,
     text: str,
     kbd: InlineKeyboardMarkup,
-) -> None:
+    parse_mode: str = "Markdown",
+) -> Message:
     """
-    Tenta editar a mensagem actual; se esta já não existir, envia nova.
-    • Actualiza menu_msg_id / menu_chat_id no FSM
-    • Re-inicia o timeout através de start_menu_timeout
+    Edita (ou envia nova) mensagem-menu, grava o id no FSM
+    e (re)inicia o timeout de 60 s.
     """
     try:
-        await cb.message.edit_text(text, reply_markup=kbd, parse_mode="Markdown")
+        await cb.message.edit_text(text, reply_markup=kbd, parse_mode=parse_mode)
         msg = cb.message
     except exceptions.TelegramBadRequest:
-        # foi apagada / modificada → criar nova
-        await cb.message.delete()
-        msg = await cb.message.answer(text, reply_markup=kbd, parse_mode="Markdown")
-        await state.update_data(menu_msg_id=msg.message_id,
-                                menu_chat_id=msg.chat.id)
+        # não editável ou já inexistente
+        try:
+            await cb.message.delete()
+        except exceptions.TelegramBadRequest:
+            pass
+        msg = await cb.message.answer(text, reply_markup=kbd, parse_mode=parse_mode)
 
-    # (re)arma timeout global de 60 s
+    await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
     start_menu_timeout(cb.bot, msg, state)
+    return msg
 
 
-async def close_menu(cb: CallbackQuery, state: FSMContext) -> None:
-    """Apaga a mensagem-menu e limpa as chaves do FSM."""
-    try:
-        await cb.message.delete()
-    except exceptions.TelegramBadRequest:
-        pass
-    await state.update_data(menu_msg_id=None, menu_chat_id=None)
+# ───────────────────── fallback: cliques em menus antigos ──────────────────
+@router.callback_query()
+async def _stale_menu_guard(cb: CallbackQuery, state: FSMContext) -> None:
+    """
+    Executa-se *antes* dos handlers específicos.
+    • Se o menu do clique não for o activo ⇒ mostra pop-up e cancela propagação.
+    • Caso contrário deixa o fluxo continuar normalmente.
+    """
+    if not await is_active_menu(cb, state):
+        try:
+            await cb.answer(
+                "⚠️ Este menu já não está activo.\n"
+                "Envie /start ou pressione *Menu* para abrir um novo.",
+                show_alert=True,
+            )
+        finally:
+            raise CancelHandler()             # impede handlers seguintes
