@@ -1,25 +1,26 @@
 # bot/handlers/__init__.py
 """
-Regista, na ordem correcta, todos os routers da aplicação.
-
-NOTA: `menu_guard.py` é apenas um módulo utilitário (não contém Router),
-por isso **NÃO** deve ser importado aqui. A tentativa anterior de
-`from .menu_guard import router` provocava o erro observado.
+Regista todos os routers, assegurando que:
+1)  menu_guard é o PRIMEIRO (intercepta cliques em menus antigos);
+2)  system_handlers continua a correr antes dos específicos;
+3)  restante ordem mantém-se.
 """
 from aiogram import Dispatcher, Router
 
-from .auth_handlers import router as auth_router
-from .system_handlers import router as system_router
-from .patient_handlers import router as patient_router
-from .caregiver_handlers import router as caregiver_router
+from .menu_guard               import router as menu_guard_router   # 🆕 1.º!
+from .system_handlers          import router as system_router
+from .auth_handlers            import router as auth_router
+from .patient_handlers         import router as patient_router
+from .caregiver_handlers       import router as caregiver_router
 from .physiotherapist_handlers import router as physio_router
-from .accountant_handlers import router as accountant_router
-from .administrator_handlers import router as admin_router
-from .debug_handlers import router as debug_router
+from .accountant_handlers      import router as accountant_router
+from .administrator_handlers   import router as admin_router
+from .debug_handlers           import router as debug_router
 
 _all: list[Router] = [
-    auth_router,
+    menu_guard_router,   # <- sempre primeiro
     system_router,
+    auth_router,
     patient_router,
     caregiver_router,
     physio_router,
