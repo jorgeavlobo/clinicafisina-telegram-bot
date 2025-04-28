@@ -1,5 +1,5 @@
 # bot/middlewares/active_menu_middleware.py
-from aiogram.exceptions import CancelHandler
+from aiogram import CancelHandler
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
 from aiogram import exceptions
 from aiogram.types import CallbackQuery
