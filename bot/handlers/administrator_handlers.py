@@ -1,9 +1,9 @@
 # bot/handlers/administrator_handlers.py
 """
-handlers do menu de Administrador
-• garante que só o menu activo responde
-• timeout de 60 s
-• botão «Voltar» funciona correctamente
+Administrator menu handlers.
+- Ensures only the active menu responds (via global middleware).
+- 60 s timeout for menu inactivity.
+- "Voltar" (Back) button works correctly.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ router.callback_query.filter(RoleFilter("administrator"))
 def _agenda_kbd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📆 Geral",               callback_data="agenda:geral")],
+            [InlineKeyboardButton(text="📆 Geral", callback_data="agenda:geral")],
             [InlineKeyboardButton(text="🩺 Escolher Fisioterapeuta", callback_data="agenda:fisios")],
             [back_button()],
         ]
@@ -40,28 +40,33 @@ def _users_kbd() -> InlineKeyboardMarkup:
     )
 
 # ───────────────────────── helpers ──────────────────────────────────
-async def _is_active(cb: CallbackQuery, state: FSMContext) -> bool:
-    data = await state.get_data()
-    return cb.message.message_id == data.get("menu_msg_id")
-
 async def _replace_menu(
     cb: CallbackQuery,
     state: FSMContext,
     text: str,
     kbd: InlineKeyboardMarkup,
 ) -> None:
+    """
+    Edit the current menu message to update its content, or send a new message if editing fails (e.g., message is too old).
+    Updates the FSM state data with the new menu message ID and restarts the inactivity timeout.
+    """
     try:
         await cb.message.edit_text(text, reply_markup=kbd, parse_mode="Markdown")
         msg = cb.message
     except exceptions.TelegramBadRequest:
+        # If edit fails (message might be obsolete), delete it and send a new one
         await cb.message.delete()
         msg = await cb.message.answer(text, reply_markup=kbd, parse_mode="Markdown")
-        await state.update_data(menu_msg_id=msg.message_id,
-                                menu_chat_id=msg.chat.id)
+        # Update FSM context with the new active menu message details
+        await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
 
+    # Start (or reset) the 60-second inactivity timeout for this menu
     start_menu_timeout(cb.bot, msg, state)
 
 async def _show_main_menu(cb: CallbackQuery, state: FSMContext) -> None:
+    """
+    Return to the main Administrator menu.
+    """
     await state.set_state(AdminMenuStates.MAIN)
     await _replace_menu(cb, state, "💻 *Menu:*", _main_menu_kbd())
 
@@ -71,10 +76,8 @@ async def _show_main_menu(cb: CallbackQuery, state: FSMContext) -> None:
     F.data.in_(["admin:agenda", "admin:users"])
 )
 async def admin_main_nav(cb: CallbackQuery, state: FSMContext):
-    if not await _is_active(cb, state):
-        await cb.answer("⚠️ Este menu já não está activo.", show_alert=True)
-        return
-    await cb.answer()
+    # Navigate from the main menu to the "Agenda" or "Utilizadores" submenu
+    await cb.answer()  # acknowledge the interaction promptly
 
     if cb.data == "admin:agenda":
         await state.set_state(AdminMenuStates.AGENDA)
@@ -89,9 +92,7 @@ async def admin_main_nav(cb: CallbackQuery, state: FSMContext):
     F.data.in_(["agenda:geral", "agenda:fisios"])
 )
 async def agenda_placeholders(cb: CallbackQuery, state: FSMContext):
-    if not await _is_active(cb, state):
-        await cb.answer("⚠️ Este menu já não está activo.", show_alert=True)
-        return
+    # Placeholder interaction (not implemented yet) for Agenda options
     await cb.answer("🚧 Placeholder – em desenvolvimento", show_alert=True)
     await cb.message.delete()
     await state.update_data(menu_msg_id=None, menu_chat_id=None)
@@ -107,9 +108,7 @@ async def agenda_back(cb: CallbackQuery, state: FSMContext):
     F.data.in_(["users:search", "users:add"])
 )
 async def users_placeholders(cb: CallbackQuery, state: FSMContext):
-    if not await _is_active(cb, state):
-        await cb.answer("⚠️ Este menu já não está activo.", show_alert=True)
-        return
+    # Placeholder interaction (not implemented yet) for Users options
     await cb.answer("🚧 Placeholder – em desenvolvimento", show_alert=True)
     await cb.message.delete()
     await state.update_data(menu_msg_id=None, menu_chat_id=None)
