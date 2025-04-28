@@ -1,4 +1,4 @@
-
+# bot/handlers/menu_guard.py
 """
 menu_guard.py  –  utilitário genérico para todos os handlers inline-menu
 ────────────────────────────────────────────────────────────────────────
