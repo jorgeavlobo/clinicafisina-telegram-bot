@@ -1,62 +1,80 @@
 # bot/menus/common.py
 """
-Utilitários partilhados entre teclados inline/reply.
+Utilitários partilhados por todos os menus inline.
 
-• back_button() –  🔙 Voltar
-• start_menu_timeout() – agenda remoção automática do menu após 60 s
+• back_button()  – devolve um InlineKeyboardButton “Voltar”.
+• start_menu_timeout() – agenda a eliminação automática do menu
+  se não houver interacção em 60 s (ver chamadas nos handlers).
 """
 
-from __future__ import annotations
-
 import asyncio
-from typing import Dict, Tuple
+from typing import Callable, Awaitable
 
-from aiogram import Bot
-from aiogram.types import InlineKeyboardButton, Message, exceptions
+from aiogram import Bot, exceptions          # ← import corrigido aqui
+from aiogram.types import InlineKeyboardButton, Message
+from aiogram.fsm.context import FSMContext
+
 
 __all__ = ["back_button", "start_menu_timeout"]
 
-# ─────────────── Botão [Voltar] ────────────────
+
+# ──────────────────────────── Botão “Voltar” ────────────────────────────
 def back_button() -> InlineKeyboardButton:
+    """🔙 Botão genérico de retorno com callback-data «back»."""
     return InlineKeyboardButton(text="🔙 Voltar", callback_data="back")
 
 
-# ─────────────── Timeout de menus ──────────────
-# tarefa assíncrona → { (chat_id, msg_id): task }
-_TIMEOUT_TASKS: Dict[Tuple[int, int], asyncio.Task] = {}
-
-async def _timeout_worker(
+# ─────────────────────── Timeout automático do menu ─────────────────────
+async def _delete_menu_after_delay(
     bot: Bot,
     chat_id: int,
     msg_id: int,
-    seconds: int = 60,
+    state: FSMContext,
+    delay: int,
 ) -> None:
-    """Espera `seconds` segundos; se a mensagem ainda existir, apaga-a e avisa."""
+    """Tarefa interna: aguarda ‹delay› s e elimina o menu se ainda existir."""
+    await asyncio.sleep(delay)
+
+    data = await state.get_data()
+    # Se entretanto foi mostrado outro menu, aborta:
+    if data.get("menu_msg_id") != msg_id:
+        return
+
     try:
-        await asyncio.sleep(seconds)
         await bot.delete_message(chat_id, msg_id)
-        await bot.send_message(
-            chat_id,
-            "⏰ Menu fechado por inactividade (60 s). "
-            "Escreva /start ou use o botão de menu para voltar a abrir.",
-        )
     except exceptions.TelegramBadRequest:
         # mensagem já não existe ou é demasiado antiga
         pass
-    finally:
-        # retira do dicionário
-        _TIMEOUT_TASKS.pop((chat_id, msg_id), None)
 
-def start_menu_timeout(bot: Bot, msg: Message, seconds: int = 60) -> None:
-    """
-    Cancela qualquer timeout anterior *do mesmo chat* e agenda um novo.
-    Chamar assim que um menu é enviado/actualizado.
-    """
-    # cancela timeouts pendentes no mesmo chat
-    for (c_id, m_id), task in list(_TIMEOUT_TASKS.items()):
-        if c_id == msg.chat.id:
-            task.cancel()
-            _TIMEOUT_TASKS.pop((c_id, m_id), None)
+    await bot.send_message(
+        chat_id,
+        "⌛ O menu ficou inactivo durante 60 s e foi fechado.\n"
+        "Se precisar, utilize /start ou o botão “Menu” para reabri-lo.",
+    )
+    # limpa as chaves do menu no FSM
+    await state.update_data(menu_msg_id=None, menu_chat_id=None)
 
-    task = asyncio.create_task(_timeout_worker(bot, msg.chat.id, msg.message_id, seconds))
-    _TIMEOUT_TASKS[(msg.chat.id, msg.message_id)] = task
+
+def start_menu_timeout(
+    bot: Bot,
+    message: Message,
+    state: FSMContext,
+    delay: int = 60,
+) -> None:
+    """
+    Agenda a remoção automática da mensagem-menu após ‹delay› segundos.
+
+    Deve ser chamada IMEDIATAMENTE depois de enviar o menu e
+    guardar em FSM:
+        await state.update_data(menu_msg_id=msg.message_id, ...)
+        common.start_menu_timeout(bot, msg, state)
+    """
+    asyncio.create_task(
+        _delete_menu_after_delay(
+            bot=bot,
+            chat_id=message.chat.id,
+            msg_id=message.message_id,
+            state=state,
+            delay=delay,
+        )
+    )
