@@ -1,20 +1,20 @@
 # bot/handlers/menu_guard.py
 """
-Funções utilitárias e “router” genérico que:
+Funções utilitárias e *router* genérico que:
 • garante que apenas o último menu inline permanece activo;
 • repõe/actualiza o menu (com timeout de 60 s);
-• intercepta cliques em menus antigos e mostra um pop-up.
+• intercepta cliques em menus antigos e mostra pop-up.
 """
 from __future__ import annotations
 
 from aiogram import Router, exceptions
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.fsm.context import FSMContext
-from aiogram.exceptions import CancelHandler   # para abortar propagação
+from aiogram.exceptions import SkipHandler          # ← v3.20
 
 from bot.menus.common import start_menu_timeout
 
-router = Router(name="menu_guard")            # router genérico — inclui fallback
+router = Router(name="menu_guard")
 
 
 # ───────────────────────── helpers reutilizáveis ──────────────────────────
@@ -39,7 +39,6 @@ async def replace_menu(
         await cb.message.edit_text(text, reply_markup=kbd, parse_mode=parse_mode)
         msg = cb.message
     except exceptions.TelegramBadRequest:
-        # não editável ou já inexistente
         try:
             await cb.message.delete()
         except exceptions.TelegramBadRequest:
@@ -56,15 +55,13 @@ async def replace_menu(
 async def _stale_menu_guard(cb: CallbackQuery, state: FSMContext) -> None:
     """
     Executa-se *antes* dos handlers específicos.
-    • Se o menu do clique não for o activo ⇒ mostra pop-up e cancela propagação.
+    • Se o menu do clique não for o activo ⇒ mostra pop-up e levanta SkipHandler.
     • Caso contrário deixa o fluxo continuar normalmente.
     """
     if not await is_active_menu(cb, state):
-        try:
-            await cb.answer(
-                "⚠️ Este menu já não está activo.\n"
-                "Envie /start ou pressione *Menu* para abrir um novo.",
-                show_alert=True,
-            )
-        finally:
-            raise CancelHandler()             # impede handlers seguintes
+        await cb.answer(
+            "⚠️ Este menu já não está activo.\n"
+            "Envie /start ou pressione *Menu* para abrir um novo.",
+            show_alert=True,
+        )
+        raise SkipHandler()                  # interrompe restante processamento
