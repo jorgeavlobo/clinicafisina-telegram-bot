@@ -1,16 +1,11 @@
 # bot/handlers/administrator_handlers.py
 """
 handlers do menu de Administrador
-
 • garante que só o menu activo responde
 • timeout de 60 s
-• botão «Voltar» volta correctamente ao menu principal
+• botão «Voltar» funciona correctamente
 """
-
 from __future__ import annotations
-
-import asyncio
-from typing import Iterable
 
 from aiogram import Router, F, exceptions
 from aiogram.filters import StateFilter
@@ -20,7 +15,7 @@ from aiogram.fsm.context import FSMContext
 from bot.filters.role_filter      import RoleFilter
 from bot.states.admin_menu_states import AdminMenuStates
 from bot.menus.common             import back_button, start_menu_timeout
-from bot.menus.administrator_menu import build_menu as _main_menu_kbd   # ← NOVO
+from bot.menus.administrator_menu import build_menu as _main_menu_kbd
 
 router = Router(name="administrator")
 router.callback_query.filter(RoleFilter("administrator"))
@@ -29,8 +24,8 @@ router.callback_query.filter(RoleFilter("administrator"))
 def _agenda_kbd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton("📆 Geral",               callback_data="agenda:geral")],
-            [InlineKeyboardButton("🩺 Escolher Fisioterapeuta", callback_data="agenda:fisios")],
+            [InlineKeyboardButton(text="📆 Geral",               callback_data="agenda:geral")],
+            [InlineKeyboardButton(text="🩺 Escolher Fisioterapeuta", callback_data="agenda:fisios")],
             [back_button()],
         ]
     )
@@ -38,8 +33,8 @@ def _agenda_kbd() -> InlineKeyboardMarkup:
 def _users_kbd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton("🔍 Procurar", callback_data="users:search")],
-            [InlineKeyboardButton("➕ Adicionar", callback_data="users:add")],
+            [InlineKeyboardButton(text="🔍 Procurar", callback_data="users:search")],
+            [InlineKeyboardButton(text="➕ Adicionar", callback_data="users:add")],
             [back_button()],
         ]
     )
@@ -55,25 +50,18 @@ async def _replace_menu(
     text: str,
     kbd: InlineKeyboardMarkup,
 ) -> None:
-    """
-    Edita a mensagem-menu; se não for possível (p.ex. ficou velha),
-    envia nova e actualiza o msg_id no FSM.
-    Reinicia sempre o timeout de 60 s.
-    """
     try:
         await cb.message.edit_text(text, reply_markup=kbd, parse_mode="Markdown")
         msg = cb.message
     except exceptions.TelegramBadRequest:
-        # envia nova
         await cb.message.delete()
         msg = await cb.message.answer(text, reply_markup=kbd, parse_mode="Markdown")
         await state.update_data(menu_msg_id=msg.message_id,
                                 menu_chat_id=msg.chat.id)
 
-    start_menu_timeout(cb.bot, msg, state)    # reinicia timeout
+    start_menu_timeout(cb.bot, msg, state)
 
 async def _show_main_menu(cb: CallbackQuery, state: FSMContext) -> None:
-    """Volta ao menu principal (Agenda / Utilizadores)."""
     await state.set_state(AdminMenuStates.MAIN)
     await _replace_menu(cb, state, "💻 *Menu:*", _main_menu_kbd())
 
