@@ -1,38 +1,34 @@
 # bot/handlers/menu_guard.py
 """
-Router genérico que faz:
-• só o ÚLTIMO menu inline responde a cliques;
-• pop-up quando o utilizador clica num menu antigo;
-• helpers reutilizáveis (is_active_menu / replace_menu).
+Router genérico que:
+• garante que apenas o menu inline mais recente responde aos cliques;
+• mostra pop-up se o utilizador carregar num menu antigo;
+• oferece helpers (is_active_menu / replace_menu) reutilizáveis.
 
-Tem de ser incluído ANTES dos routers dos perfis
-(handlers/__init__.py já o coloca em 1.º lugar).
+Tem de ser incluído ANTES dos routers de cada perfil
+(handlers/__init__.py já o faz).
 """
 from __future__ import annotations
 
 from aiogram import Router, F, exceptions
 from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
+from aiogram.filters import BaseFilter                     # ✅ correcto em 3.20
 
 from bot.menus.common import start_menu_timeout
 
-# ─────────────────── SkipHandler compatível 3.20 ───────────────────
+# ───────────────── SkipHandler compatível 3.20 ────────────────────
 try:
-    from aiogram.exceptions import SkipHandler as _SkipHandler  # >=3.2
+    from aiogram.exceptions import SkipHandler as _SkipHandler      # ≥ 3.2
 except (ImportError, AttributeError):
-    class _SkipHandler(Exception):  # fallback p/ 3.20
-        """Interrompe a cadeia de handlers (equivalente a SkipHandler)."""
+    class _SkipHandler(Exception):
+        """Fallback para interromper a cadeia de handlers."""
 
 
 router = Router(name="menu_guard")
 
-
 # ───────────────────── helpers reutilizáveis ──────────────────────
 async def is_active_menu(cb: CallbackQuery, state: FSMContext) -> bool:
-    """
-    True se o clique tiver ocorrido na última mensagem-menu.
-    Caso ainda não exista menu registado devolve True.
-    """
     data = await state.get_data()
     menu_id = data.get("menu_msg_id")
     return menu_id is None or cb.message.message_id == menu_id
@@ -44,15 +40,12 @@ async def replace_menu(
     text: str,
     reply_markup,
 ) -> None:
-    """
-    Substitui (ou cria) o menu inline e reinicia o timeout de 60 s.
-    """
+    """Substitui (ou cria) o menu e reinicia o timeout de 60 s."""
     try:
         await cb.message.edit_text(text, reply_markup=reply_markup,
                                    parse_mode="Markdown")
         msg = cb.message
     except exceptions.TelegramBadRequest:
-        # a mensagem original foi apagada/alterada -> envia nova
         await cb.message.delete()
         msg = await cb.message.answer(text, reply_markup=reply_markup,
                                       parse_mode="Markdown")
@@ -61,21 +54,19 @@ async def replace_menu(
 
     start_menu_timeout(cb.bot, msg, state)
 
-
 # ─────────────── filtro + handler para menus antigos ───────────────
-class _StaleMenu(exceptions.Filter):
+class _StaleMenu(BaseFilter):
     async def __call__(self, cb: CallbackQuery, state: FSMContext) -> bool:
         return not await is_active_menu(cb, state)
 
 
-# captura qualquer callback dos nossos menus conhecidos
+# captura callbacks dos nossos menus conhecidos
 router.callback_query.filter(
     F.data.startswith((
         "admin:", "agenda:", "users:",
         "patient:", "caregiver:", "physio:", "accountant:",
     ))
 )
-
 
 @router.callback_query(_StaleMenu())
 async def _stale_menu_guard(cb: CallbackQuery):
@@ -84,5 +75,4 @@ async def _stale_menu_guard(cb: CallbackQuery):
         "Envie /start ou prima *Menu* para abrir um novo.",
         show_alert=True,
     )
-    # pára o processamento deste callback noutros routers
-    raise _SkipHandler()
+    raise _SkipHandler()        # impede que outros routers tratem este clique
