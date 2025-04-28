@@ -14,6 +14,7 @@ Este bot é desenvolvido em [Aiogram 3.20](https://docs.aiogram.dev/en/latest/) 
 - **PostgreSQL** (armazenamento de dados)
 - **Docker + Docker Compose** (orquestração)
 - **aiohttp** (servidor Webhook interno)
+- **Makefile** (automatização de comandos)
 
 ---
 
@@ -23,26 +24,27 @@ Este bot é desenvolvido em [Aiogram 3.20](https://docs.aiogram.dev/en/latest/) 
 clinicafisina_telegram_bot/
 │
 ├── bot/
-│   ├── auth/                 # Lógica de autenticação
-│   ├── database/             # Ligação e queries à base de dados
-│   ├── filters/              # Filtros personalizados Aiogram
-│   ├── handlers/             # Handlers Telegram organizados por função
-│   ├── menus/                # Inline e Reply keyboards
-│   ├── middlewares/          # Middlewares globais
-│   ├── scripts/              # Scripts auxiliares
-│   ├── states/               # Definições de estados FSM
-│   ├── utils/                # Utilitários comuns
-│   ├── config.py             # Configurações (lidas do .env ou variáveis ambiente)
-│   ├── main.py               # Ponto de entrada do bot
+│   ├── auth/                  # Lógica de autenticação
+│   ├── database/              # Ligação e queries à base de dados
+│   ├── filters/               # Filtros personalizados Aiogram
+│   ├── handlers/              # Handlers Telegram organizados por função
+│   ├── menus/                 # Inline e Reply keyboards
+│   ├── middlewares/           # Middlewares globais
+│   ├── scripts/               # Scripts auxiliares
+│   ├── states/                # Definições de estados FSM
+│   ├── utils/                 # Utilitários comuns
+│   ├── config.py              # Configurações (.env ou variáveis ambiente)
+│   ├── main.py                # Ponto de entrada principal
 │   └── __init__.py
 │
-├── migrations/               # Scripts SQL de criação da base de dados
-├── docker-compose.yml        # Docker Compose para serviços
-├── Dockerfile                # Dockerfile do bot
-├── requirements.txt          # Dependências Python
-├── README.md                 # Este ficheiro
-├── app.py                    # Entrypoint para Docker
-└── .env                      # (opcional) Variáveis de ambiente locais
+├── migrations/                # Scripts SQL de criação de base de dados
+├── docker-compose.yml         # Docker Compose para orquestração
+├── Dockerfile                 # Dockerfile da aplicação
+├── requirements.txt           # Dependências Python
+├── README.md                  # Este ficheiro
+├── Makefile                   # Automatização de comandos Docker
+├── app.py                     # Entrypoint para Docker
+└── .env                       # (opcional) Variáveis de ambiente locais
 ```
 
 ---
@@ -62,25 +64,7 @@ pip install -r requirements.txt
 
 2. **Definir variáveis de ambiente**
 
-Cria um ficheiro `.env` baseado no `.env.example` incluído.
-
-Exemplo de `.env`:
-
-```env
-BOT_TOKEN=123456:ABCDEF
-DOMAIN=telegram.seudominio.pt
-WEBAPP_PORT=8444
-TELEGRAM_SECRET_TOKEN=seu_token_secreto
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=clinicafisina
-DB_USER=seu_utilizador
-DB_PASSWORD=sua_password
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_DB=0
-REDIS_PREFIX=clinicafisina:fsm
-```
+Cria um ficheiro `.env` baseado no `.env.example`.
 
 3. **Correr o bot localmente**
 
@@ -88,25 +72,27 @@ REDIS_PREFIX=clinicafisina:fsm
 python app.py
 ```
 
-⚠ Atenção: para Webhook funcionar localmente, é necessário expor o servidor (ex.: usar [ngrok](https://ngrok.com/)) ou configurar domínio + certificado SSL.
+⚠ Atenção: para Webhook funcionar localmente, é necessário expor o servidor (ex.: ngrok) ou configurar domínio+SSL.
 
 ---
 
 ## 🐳 Como correr o bot em Docker
 
-1. **Build da imagem**
+1. **Build da imagem e correr o serviço**
 
 ```bash
-docker-compose build
+docker-compose up -d --build
 ```
 
-2. **Correr os serviços**
+2. **Verificar estado do container**
 
 ```bash
-docker-compose up -d
+docker ps
 ```
 
-3. **Verificar logs**
+Deverá aparecer `STATUS: healthy` se o healthcheck passou.
+
+3. **Ver logs em tempo real**
 
 ```bash
 docker logs -f clinicafisina_telegram_bot
@@ -114,37 +100,52 @@ docker logs -f clinicafisina_telegram_bot
 
 ---
 
-## 🔒 Segurança
+## 📜 Comandos rápidos via Makefile
 
-- Proteção contra cliques em menus antigos implementada.
-- Middleware de verificação de permissões (RoleCheckMiddleware).
-- Segredo do Webhook validado através do cabeçalho `X-Telegram-Bot-Api-Secret-Token`.
-- Logs em tempo real.
-- Pool de ligações PostgreSQL eficiente.
+```bash
+make up        # Sobe os serviços Docker
+make down      # Derruba os serviços
+make logs      # Vê logs da aplicação
+make restart   # Reinicia o container do bot
+make build     # Faz rebuild completo da imagem
+make pull      # Faz pull da imagem mais recente
+make health    # Faz teste de healthcheck (localhost)
+make ping      # Faz ping ao bot (localhost)
+```
 
 ---
 
-## 📅 Roadmap (futuro)
+## 🔒 Segurança
 
-- [ ] Implementar gestão de utilizadores (CRUD completo)
-- [ ] Ligar o módulo de Agenda a eventos reais
-- [ ] Melhorias UX/UI dos menus
-- [ ] Deploy automático por CI/CD (GitHub Actions)
-- [ ] Documentação Swagger/OpenAPI (para API paralela)
+- Proteção automática contra cliques em menus antigos (middleware ativo).
+- Webhook protegido com `SECRET_TOKEN` validado no header.
+- Resposta rápida a healthchecks (`/healthz` e `/ping`) para Docker monitorizar.
+- Acesso HTTP público apenas via Nginx (TLS / Let's Encrypt).
+- Container protegido (porta 8444 exposta apenas internamente).
+
+---
+
+## 📅 Roadmap futuro
+
+- [ ] CRUD completo de utilizadores
+- [ ] Agenda ligada a eventos reais de sessões
+- [ ] Melhorias UX dos menus de utilizador
+- [ ] Setup de GitHub Actions para CI/CD automático
+- [ ] Documentação OpenAPI futura (API REST se necessário)
 
 ---
 
 ## 👨‍💻 Contribuição
 
-Este projeto é desenvolvido de forma privada para a Clínica Fisina.  
-Se precisar de alterar ou expandir funcionalidades, siga as práticas definidas:
+Projeto privado para a Clínica Fisina.  
+Seguir práticas de:
 - Código modular
 - Comentado em inglês
 - Clean Code
-- Manter compatibilidade Docker
+- Compatível com Docker + produção
 
 ---
 
 ## 📄 Licença
 
-Este projeto é privado e não licenciado publicamente.
+Projeto privado e não licenciado publicamente.
