@@ -7,7 +7,6 @@ Regista todos os routers, assegurando que:
 """
 from aiogram import Dispatcher, Router
 
-from .menu_guard               import router as menu_guard_router   # 🆕 1.º!
 from .system_handlers          import router as system_router
 from .auth_handlers            import router as auth_router
 from .patient_handlers         import router as patient_router
@@ -18,7 +17,6 @@ from .administrator_handlers   import router as admin_router
 from .debug_handlers           import router as debug_router
 
 _all: list[Router] = [
-    menu_guard_router,   # <- sempre primeiro
     system_router,
     auth_router,
     patient_router,
