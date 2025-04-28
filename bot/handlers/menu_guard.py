@@ -1,7 +1,7 @@
 # bot/handlers/menu_guard.py
 """
-Funções utilitárias e *router* genérico que:
-• garante que apenas o último menu inline permanece activo;
+Funções utilitárias + router genérico que
+• garante que só o último menu inline permanece activo;
 • repõe/actualiza o menu (com timeout de 60 s);
 • intercepta cliques em menus antigos e mostra pop-up.
 """
@@ -10,16 +10,22 @@ from __future__ import annotations
 from aiogram import Router, exceptions
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.fsm.context import FSMContext
-from aiogram.exceptions import SkipHandler          # ← v3.20
+
+# ――― SkipHandler: compatível com qualquer versão aiogram v3 ―――
+try:
+    from aiogram.exceptions import SkipHandler          # >= v3.1
+except ImportError:                                     # fallback p/ builds que não o incluam
+    class SkipHandler(Exception):                       # noqa: D401, E302
+        """Interrompe o processamento de um handler."""  # igual ao original
+
 
 from bot.menus.common import start_menu_timeout
 
 router = Router(name="menu_guard")
 
-
 # ───────────────────────── helpers reutilizáveis ──────────────────────────
 async def is_active_menu(cb: CallbackQuery, state: FSMContext) -> bool:
-    """True se o clique ocorreu no último menu registado no FSM."""
+    """Devolve *True* se o clique ocorreu na última mensagem-menu registada no FSM."""
     data = await state.get_data()
     return cb.message.message_id == data.get("menu_msg_id")
 
@@ -32,7 +38,7 @@ async def replace_menu(
     parse_mode: str = "Markdown",
 ) -> Message:
     """
-    Edita (ou envia nova) mensagem-menu, grava o id no FSM
+    Edita (ou envia nova) a mensagem-menu, guarda o *msg_id* no FSM
     e (re)inicia o timeout de 60 s.
     """
     try:
@@ -55,8 +61,8 @@ async def replace_menu(
 async def _stale_menu_guard(cb: CallbackQuery, state: FSMContext) -> None:
     """
     Executa-se *antes* dos handlers específicos.
-    • Se o menu do clique não for o activo ⇒ mostra pop-up e levanta SkipHandler.
-    • Caso contrário deixa o fluxo continuar normalmente.
+    ▸ Se o menu do clique não for o activo ⇒ mostra pop-up e interrompe a
+      propagação do evento.
     """
     if not await is_active_menu(cb, state):
         await cb.answer(
@@ -64,4 +70,4 @@ async def _stale_menu_guard(cb: CallbackQuery, state: FSMContext) -> None:
             "Envie /start ou pressione *Menu* para abrir um novo.",
             show_alert=True,
         )
-        raise SkipHandler()                  # interrompe restante processamento
+        raise SkipHandler()          # pára o processamento nos routers seguintes
