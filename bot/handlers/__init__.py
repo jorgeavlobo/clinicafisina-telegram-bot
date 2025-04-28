@@ -8,17 +8,19 @@ from .physiotherapist_handlers import router as physio_router
 from .accountant_handlers import router as accountant_router
 from .administrator_handlers import router as admin_router
 from .debug_handlers import router as debug_router
-from .system_handlers import router as system_router   # 👈 NOVO
+from .system_handlers import router as system_router
+from .menu_guard import router as menu_guard_router
 
 _all: list[Router] = [
     auth_router,
-    system_router,        # system antes dos menus específicos
     patient_router,
     caregiver_router,
     physio_router,
     accountant_router,
     admin_router,
     debug_router,
+    system_router,
+    menu_guard_router,
 ]
 
 def register_routers(dp: Dispatcher) -> None:
