@@ -69,3 +69,7 @@ REDIS_PREFIX: str = os.getenv("REDIS_PREFIX", "fsm")       # chave-prefixo no Re
 # ───────────── Diversos ─────────────
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 TIMEZONE: str  = os.getenv("LOCAL_TIMEZONE", "Europe/Zurich")
+
+# ───────────── Timeouts (Menus) ─────────────
+MENU_TIMEOUT: int = int(os.getenv("MENU_TIMEOUT", "60"))
+MESSAGE_TIMEOUT: int = int(os.getenv("MESSAGE_TIMEOUT", "60"))
