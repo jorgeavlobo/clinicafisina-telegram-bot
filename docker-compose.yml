@@ -2,13 +2,26 @@ services:
   bot:
     image: ghcr.io/jorgeavlobo/clinicafisina-telegram-bot:latest
     container_name: clinicafisina_telegram_bot
+
     env_file: .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    restart: unless-stopped
 
     ports:
-      - "127.0.0.1:8444:8444"  # <== FIXED: match container port to main.py
+      - "127.0.0.1:8444:8444"  # Apenas acessível localmente (o Nginx faz o proxy para HTTPS público)
+
+    restart: unless-stopped
+
+    pull_policy: always  # Sempre tentar usar a versão mais recente da imagem
+
+    stop_grace_period: 30s  # Dá tempo suficiente para encerramento limpo (Webhooks, Redis, etc.)
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8444/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
     networks:
       - redis_net
