@@ -117,7 +117,8 @@ async def start_add_user(cb: CallbackQuery, state: FSMContext):
     msg = await cb.message.answer("👤 *Adicionar Utilizador*\nPor favor, selecione o *tipo* de utilizador:",
                                   reply_markup=build_user_type_kbd(), parse_mode="Markdown")
     # Initialize lists to track messages for deletion (privacy)
-    await state.update_data(bot_msgs=[msg.message_id], user_msgs=[])
+    await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
+    start_menu_timeout(cb.bot, msg, state)
 
 @router.callback_query(StateFilter(AddUserStates.CHOOSING_ROLE), F.data.startswith("role:"))
 async def choose_user_type(cb: CallbackQuery, state: FSMContext):
