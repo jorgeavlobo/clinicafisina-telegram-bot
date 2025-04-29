@@ -1,3 +1,4 @@
+# bot/auth/auth_flow.py
 """
 Fluxo de autenticação / onboarding (Aiogram 3).
 
