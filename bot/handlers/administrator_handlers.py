@@ -117,7 +117,8 @@ async def start_add_user(cb: CallbackQuery, state: FSMContext):
     msg = await cb.message.answer("👤 *Adicionar Utilizador*\nPor favor, selecione o *tipo* de utilizador:",
                                   reply_markup=build_user_type_kbd(), parse_mode="Markdown")
     # Initialize lists to track messages for deletion (privacy)
-    await state.update_data(bot_msgs=[msg.message_id], user_msgs=[])
+    await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
+    start_menu_timeout(cb.bot, msg, state)
 
 @router.callback_query(StateFilter(AddUserStates.CHOOSING_ROLE), F.data.startswith("role:"))
 async def choose_user_type(cb: CallbackQuery, state: FSMContext):
@@ -717,7 +718,16 @@ async def choose_field_to_edit(cb: CallbackQuery, state: FSMContext):
             bot_msgs.append(prompt_msg.message_id)
             await state.update_data(bot_msgs=bot_msgs)
 
-@router.message()
+@router.callback_query(StateFilter(AddUserStates.CHOOSING_ROLE), F.data == "users:add_back")
+async def back_to_user_menu(cb: CallbackQuery, state: FSMContext):
+    """
+    Handler to return from the role selection back to the 'Utilizadores' submenu.
+    """
+    await cb.answer()
+    await state.set_state(AdminMenuStates.USERS)
+    await _replace_menu(cb, state, "👥 *Utilizadores* — seleccione:", _users_kbd())
+
+@router.message(StateFilter(AddUserStates))
 async def cancel_add_user(message: Message, state: FSMContext):
     """
     Cancel the addition process (triggered when user presses Cancel at any step).
