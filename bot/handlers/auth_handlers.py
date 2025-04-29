@@ -1,3 +1,4 @@
+# bot/handlers/auth_handlers.py
 """
 Handlers de autenticação (/start + onboarding).
 
