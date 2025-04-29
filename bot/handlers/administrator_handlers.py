@@ -717,7 +717,7 @@ async def choose_field_to_edit(cb: CallbackQuery, state: FSMContext):
             bot_msgs.append(prompt_msg.message_id)
             await state.update_data(bot_msgs=bot_msgs)
 
-@router.message()
+@router.message(StateFilter(AddUserStates))
 async def cancel_add_user(message: Message, state: FSMContext):
     """
     Cancel the addition process (triggered when user presses Cancel at any step).
