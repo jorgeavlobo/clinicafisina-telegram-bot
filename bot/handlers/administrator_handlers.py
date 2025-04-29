@@ -717,6 +717,15 @@ async def choose_field_to_edit(cb: CallbackQuery, state: FSMContext):
             bot_msgs.append(prompt_msg.message_id)
             await state.update_data(bot_msgs=bot_msgs)
 
+@router.callback_query(StateFilter(AddUserStates.CHOOSING_ROLE), F.data == "users:add_back")
+async def back_to_user_menu(cb: CallbackQuery, state: FSMContext):
+    """
+    Handler to return from the role selection back to the 'Utilizadores' submenu.
+    """
+    await cb.answer()
+    await state.set_state(AdminMenuStates.USERS)
+    await _replace_menu(cb, state, "👥 *Utilizadores* — seleccione:", _users_kbd())
+
 @router.message(StateFilter(AddUserStates))
 async def cancel_add_user(message: Message, state: FSMContext):
     """
