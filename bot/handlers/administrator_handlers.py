@@ -726,21 +726,22 @@ async def cancel_add_user(message: Message, state: FSMContext):
         await message.answer("❌ *Operação cancelada.*", parse_mode="Markdown")
     except exceptions.TelegramBadRequest:
         pass
-    await cleanup_flow_messages(state, message.chat.id)
+    await cleanup_flow_messages(state, message.chat.id, message.bot)
     await state.clear()
 
-async def cleanup_flow_messages(state: FSMContext, chat_id: int):
+
+async def cleanup_flow_messages(state: FSMContext, chat_id: int, bot: Bot):
     """
     Deletes all tracked messages from the add user flow to protect privacy.
     """
     data = await state.get_data()
     for msg_id in data.get("bot_msgs", []):
         try:
-            await state.bot.delete_message(chat_id, msg_id)
+            await bot.delete_message(chat_id, msg_id)
         except exceptions.TelegramBadRequest:
             continue
     for msg_id in data.get("user_msgs", []):
         try:
-            await state.bot.delete_message(chat_id, msg_id)
+            await bot.delete_message(chat_id, msg_id)
         except exceptions.TelegramBadRequest:
             continue
