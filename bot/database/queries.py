@@ -1,3 +1,4 @@
+# bot/database/queries.py
 """
 Operações CRUD de baixo nível usadas pela camada de autenticação
 e pelo middleware de roles.
