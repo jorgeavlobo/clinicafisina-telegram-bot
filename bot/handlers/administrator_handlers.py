@@ -27,8 +27,8 @@ router.callback_query.filter(RoleFilter("administrator"))
 def _agenda_kbd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton("📆 Geral",               callback_data="agenda:geral")],
-            [InlineKeyboardButton("🩺 Fisioterapeuta", callback_data="agenda:fisios")],
+            [InlineKeyboardButton(text="📆 Geral",               callback_data="agenda:geral")],
+            [InlineKeyboardButton(text="🩺 Escolher Fisioterapeuta", callback_data="agenda:fisios")],
             [back_button()],
         ]
     )
