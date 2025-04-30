@@ -1,12 +1,11 @@
 # bot/states/menu_states.py
 """
-Estados globais de navegação de menus comuns a vários roles.
+Estados genéricos de navegação de menus.
 """
-from aiogram.fsm.state import State, StatesGroup
+
+from aiogram.fsm.state import StatesGroup, State
+
 
 class MenuStates(StatesGroup):
-    """
-    Estados de menu comuns:
-    WAIT_ROLE_CHOICE – estado de espera pela escolha de perfil (role) ativo.
-    """
-    WAIT_ROLE_CHOICE = State()
+    WAIT_ROLE_CHOICE = State()   # à espera que o utilizador escolha o perfil
+    MENU_ACTIVE      = State()   # qualquer menu principal visível (não-admin)
