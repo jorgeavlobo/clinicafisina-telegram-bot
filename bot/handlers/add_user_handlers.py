@@ -2,11 +2,17 @@
 """
 Fluxo completo “Adicionar Utilizador”.
 
-• Corrige regressão do botão «Regressar à opção anterior».
-• Mostra sempre o prompt correcto quando se volta atrás.
-• Armazena o ID da mensagem‑resumo para que o ActiveMenuMiddleware aceite
-  callbacks dos botões Confirmar / Editar / Cancelar.
-• Implementa handlers iniciais para esses 3 botões (placeholders funcionais).
+Correções desta versão
+──────────────────────
+1. **Regressar à opção anterior** a partir do primeiro passo volta a mostrar o
+   teclado inline de escolha de *User Role* e remove de imediato o teclado
+   "custom reply".
+2. O teclado "custom reply" desaparece sempre que saímos do formulário para
+   o menu de tipos.
+3. Quando regressamos e o teclado inline aparece, o par `(menu_msg_id,
+   menu_chat_id)` é actualizado — o `ActiveMenuMiddleware` já não bloqueia
+   cliques nos botões.
+4. Mensagem "Passo anterior" substituída pelo prompt correcto.
 """
 
 from __future__ import annotations
@@ -16,13 +22,13 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
 from bot.states.add_user_flow   import AddUserFlow
-from bot.menus.common           import cancel_back_kbd, back_button
+from bot.menus.common           import cancel_back_kbd
 from bot.menus.administrator_menu import build_user_type_kbd
 from bot.utils                  import validators as V
 
 router = Router(name="add_user")
 
-# ─────────────────── PROMPTS por estado ───────────────────
+# ─────────────────── PROMPTS por estado ───────────────────
 PROMPTS: dict[AddUserFlow, str] = {
     AddUserFlow.FIRST_NAME: "Primeiro(s) nome(s):",
     AddUserFlow.LAST_NAME: "Apelido(s):",
@@ -50,23 +56,30 @@ async def _handle_back_cancel(
 ) -> bool:
     """Trata Regressar/Cancelar. Devolve True se interceptou."""
     txt = msg.text.lower().strip()
-    # Cancelar em qualquer passo – limpa tudo
+
+    # ───────── Cancelar em qualquer passo ─────────
     if txt.startswith("❌"):
         await _cancel_add(msg, state)
         return True
 
-    # Regressar à opção anterior
+    # ───────── Regressar à opção anterior ─────────
     if txt.startswith("↩️"):
-        if prev_state is None:  # Estamos no primeiro passo: voltar ao Menu de tipos
+        if prev_state is None:
+            # Estamos no primeiro passo – voltar ao menu de tipos
             await state.set_state(AddUserFlow.CHOOSING_ROLE)
-            # Mostra novamente inline keyboard dos tipos
-            await msg.answer(
+            # 1) remover o teclado reply
+            await msg.answer(" ", reply_markup=types.ReplyKeyboardRemove())
+            # 2) mostrar novamente o teclado inline com tipos
+            role_msg = await msg.answer(
                 "👤 *Adicionar utilizador* — escolha o tipo:",
                 parse_mode="Markdown",
                 reply_markup=build_user_type_kbd(),
             )
+            # 3) registar menu activo para o middleware
+            await state.update_data(menu_msg_id=role_msg.message_id,
+                                    menu_chat_id=role_msg.chat.id)
             return True
-        # Passo normal: voltar ao anterior e voltar a perguntar
+        # Passo normal: voltar ao anterior
         await _prev_step(state, prev_state)
         await _ask(msg, PROMPTS[prev_state])
         return True
@@ -83,7 +96,7 @@ async def _cancel_add(msg: types.Message, state: FSMContext):
 # ───────────────────────── FIRST_NAME ─────────────────────────
 @router.message(StateFilter(AddUserFlow.FIRST_NAME))
 async def first_name_step(msg: types.Message, state: FSMContext):
-    if await _handle_back_cancel(msg, state, None):  # None → volta ao menu roles
+    if await _handle_back_cancel(msg, state, None):
         return
     await state.update_data(first_name=msg.text.strip())
     await _ask(msg, PROMPTS[AddUserFlow.LAST_NAME])
@@ -156,7 +169,7 @@ async def email_step(msg: types.Message, state: FSMContext):
     await state.update_data(email=email)
     await _summarise(msg, state)
 
-# ─────────────────── SUMÁRIO & CONFIRMAÇÃO ───────────────────
+# ─────────────────── SUMÁRIO & CONFIRMAÇÃO ───────────────────
 async def _summarise(msg: types.Message, state: FSMContext):
     data = await state.get_data()
     summary = (
@@ -176,11 +189,10 @@ async def _summarise(msg: types.Message, state: FSMContext):
     )
     sent = await msg.answer(summary, parse_mode="Markdown", reply_markup=kbd,
                             reply_markup_remove=True)
-    # Regista esta mensagem como «menu» activo para ActiveMenuMiddleware
     await state.update_data(menu_msg_id=sent.message_id, menu_chat_id=sent.chat.id)
     await state.set_state(AddUserFlow.CONFIRM_DATA)
 
-# ────────────────── CALLBACKS Confirmar / Editar / Cancelar ──────────────────
+# ────────────────── CALLBACKS Confirmar / Editar / Cancelar ──────────────────
 @router.callback_query(AddUserFlow.CONFIRM_DATA, F.data == "adduser:cancel")
 async def confirm_cancel(cb: types.CallbackQuery, state: FSMContext):
     await cb.answer("Operação cancelada.", show_alert=True)
@@ -195,16 +207,7 @@ async def confirm_save(cb: types.CallbackQuery, state: FSMContext):
 @router.callback_query(AddUserFlow.CONFIRM_DATA, F.data == "adduser:edit")
 async def confirm_edit(cb: types.CallbackQuery, state: FSMContext):
     await cb.answer()
-    # TODO: mostrar lista de campos editáveis
     await cb.message.edit_reply_markup(reply_markup=None)
     await cb.message.answer("🚧 Edição ainda não implementada.")
-    # Mantém‑se em CONFIRM_DATA (ou muda para EDIT_FIELD quando implementado)
 
-# ───────────────────── util edit/close summary ─────────────────────
-async def _close_summary(cb: types.CallbackQuery, state: FSMContext, text: str):
-    try:
-        await cb.message.edit_text(text, parse_mode="Markdown")
-    except exceptions.TelegramBadRequest:
-        pass
-    await state.clear()
-    await state.update_data(menu_msg_id=None, menu_chat_id=None)
+async def _close_summary(cb: types.CallbackQuery, state
