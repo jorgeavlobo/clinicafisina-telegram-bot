@@ -1,9 +1,4 @@
 # bot/handlers/administrator_handlers.py
-"""
-Menu de administrador.
-• Protegido por RoleFilter("administrator")
-• Timeout de 60 s para inactividade
-"""
 from __future__ import annotations
 
 from aiogram import Router, F, exceptions
@@ -28,7 +23,7 @@ def _agenda_kbd() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="📆 Geral",         callback_data="agenda:geral")],
             [InlineKeyboardButton(text="🩺 Fisioterapeuta", callback_data="agenda:fisios")],
-            [back_button()],
+            [ [back_button()] ],
         ]
     )
 
@@ -37,7 +32,7 @@ def _users_kbd() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="🔍 Procurar", callback_data="users:search")],
             [InlineKeyboardButton(text="➕ Adicionar", callback_data="users:add")],
-            [back_button()],
+            [ [back_button()] ],
         ]
     )
 
@@ -48,7 +43,6 @@ async def _replace_menu(
     text: str,
     kbd: InlineKeyboardMarkup,
 ) -> None:
-    """Edita (ou recria) o menu e reinicia o timeout de inactividade."""
     try:
         await cb.message.edit_text(text, reply_markup=kbd, parse_mode="Markdown")
         msg = cb.message
@@ -88,7 +82,7 @@ async def admin_main_nav(cb: CallbackQuery, state: FSMContext):
 @router.callback_query(
     StateFilter(AdminMenuStates.AGENDA),
     F.data.in_(["agenda:geral", "agenda:fisios"]))
-async def agenda_placeholders(cb: CallbackQuery, _state: FSMContext):
+async def agenda_placeholders(cb: CallbackQuery, state: FSMContext):     # <- nome correcto
     await cb.answer("🚧 Placeholder – em desenvolvimento", show_alert=True)
     try:
         await cb.message.delete()
@@ -127,7 +121,6 @@ async def users_back(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await _show_main_menu(cb, state)
 
-# “Voltar” a partir de qualquer estado interno de Utilizadores
 @router.callback_query(
     StateFilter((AdminMenuStates.USERS_SEARCH, AdminMenuStates.USERS_ADD, AddUserStates)),
     F.data == "back")
@@ -142,7 +135,7 @@ async def messages_back(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await _show_main_menu(cb, state)
 
-# ─── Step 1 do fluxo “Adicionar Utilizador” (placeholder) ───
+# ───────── Fluxo “Adicionar Utilizador” (placeholder) ──────
 @router.callback_query(StateFilter(AddUserStates.CHOOSING_ROLE),
                        F.data.startswith("role:"))
 async def adduser_choose_role(cb: CallbackQuery, state: FSMContext):
