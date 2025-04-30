@@ -2,23 +2,28 @@
 """
 Role-Check Middleware
 
-1.  Obtém da BD o utilizador e injeta em `data`:
-        data["user"]   – dict  (registo completo de *users*)
+1.  Vai à BD buscar o utilizador e injeta em `data`:
+        data["user"]   – dict (linha completa de *users*)
         data["roles"]  – list[str] (nomes dos perfis em minúsculas)
 
-2.  Bloqueia o processamento se o utilizador ainda não tiver
-    «active_role» no FSM, **excepto** nos casos permitidos:
+2.  Bloqueia qualquer update que não tenha «active_role»
+    gravado no FSM, EXCEPTO nos casos permitidos:
 
-    • Estado actual == MenuStates.WAIT_ROLE_CHOICE
-    • CallbackQuery cujo data começa por "role:"
-    • Comandos      /start  /admin  /whoami
+    •   Selector de perfis
+          – estado MenuStates.WAIT_ROLE_CHOICE
+          – callback data que começa por "role:"
+    •   Fluxo de onboarding
+          – AuthStates.WAITING_CONTACT
+          – AuthStates.CONFIRMING_LINK
+    •   Comandos utilitários /start  /admin  /whoami
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Callable, Dict, Awaitable, Tuple, List, Optional
+from contextlib import suppress
+from typing import Any, Dict, Callable, Awaitable, Tuple, List, Optional
 
 from aiogram import BaseMiddleware, types, exceptions
 from aiogram.fsm.context import FSMContext
@@ -26,64 +31,66 @@ from aiogram.fsm.context import FSMContext
 from bot.database.connection import get_pool
 from bot.database import queries as q
 from bot.states.menu_states import MenuStates
+from bot.states.auth_states import AuthStates     # ← necessário p/ onboarding
 
 log = logging.getLogger(__name__)
 
-# ————————————————————————————————————————————————————————
-#  Pequeno cache em memória  (user, roles)  →  TTL 60 s
-# ————————————————————————————————————————————————————————
+# ───────────────────────── cache simples ─────────────────────────
 _CACHE: Dict[int, Tuple[Optional[Dict[str, Any]], List[str], float]] = {}
-_TTL = 60.0  # seg.
+_TTL = 60.0  # segundos
 
 _ALLOWED_CMDS = {"/start", "/admin", "/whoami"}
 
 
 class RoleCheckMiddleware(BaseMiddleware):
-    async def __call__(
+    async def __call__(                     # type: ignore[override]
         self,
-        handler: Callable[[types.T], Awaitable[Any]],            # type: ignore[name-defined]
-        event:   types.T,                                        # type: ignore[name-defined]
-        data:    Dict[str, Any],
-    ) -> Any:                                                    # type: ignore[override]
+        handler: Callable[[types.TelegramObject, Dict[str, Any]], Awaitable[Any]],
+        event: types.TelegramObject,
+        data: Dict[str, Any],
+    ) -> Any:
+
         tg_user: Optional[types.User] = data.get("event_from_user")
 
-        # ────────────────── 1. injeta user / roles (com cache) ──────────────────
+        # ───── 1. injeta (user, roles) com cache ─────
         if tg_user:
             user, roles = await self._get_user_and_roles(tg_user.id)
             if user:
-                data["user"]  = user
+                data["user"] = user
                 data["roles"] = roles
 
         state: FSMContext = data["state"]
-
-        # ────────────────── 2. casos sempre permitidos ──────────────────
         cur_state = await state.get_state()
 
-        # a) selector ainda activo
-        if cur_state == MenuStates.WAIT_ROLE_CHOICE.state:
+        # ───── 2. situações que passam SEM verificar role ─────
+        if cur_state in (
+            MenuStates.WAIT_ROLE_CHOICE.state,
+            AuthStates.WAITING_CONTACT.state,
+            AuthStates.CONFIRMING_LINK.state,
+        ):
             return await handler(event, data)
 
-        # b) clique em «role:xxx»
-        if isinstance(event, types.CallbackQuery) and event.data and event.data.startswith("role:"):
+        # clique em "role:xxx" dentro do selector
+        if isinstance(event, types.CallbackQuery) and \
+           event.data and event.data.startswith("role:"):
             return await handler(event, data)
 
-        # c) comandos de utilidade
+        # comandos utilitários pré-login
         if isinstance(event, types.Message) and event.text:
-            cmd = event.text.split()[0].lower()
-            if cmd in _ALLOWED_CMDS:
+            if event.text.split()[0].lower() in _ALLOWED_CMDS:
                 return await handler(event, data)
 
-        # ────────────────── 3. verifica se já há role activo ──────────────────
+        # ───── 3. exige active_role ─────
         if (await state.get_data()).get("active_role"):
             return await handler(event, data)
 
-        # ────────────────── 4. bloqueado ──────────────────
+        # ───── 4. bloqueado ─────
         await self._deny(event)
         uid = tg_user.id if tg_user else "?"
         log.info("Blocado por falta de role activo – user %s", uid)
         return None
 
-    # —————————————————— helpers ——————————————————
+    # ───────────────── helpers ─────────────────
     async def _get_user_and_roles(
         self,
         tg_id: int,
@@ -109,12 +116,8 @@ class RoleCheckMiddleware(BaseMiddleware):
             "Contacte a receção/administrador."
         )
         if isinstance(event, types.CallbackQuery):
-            try:
+            with suppress(exceptions.TelegramBadRequest):
                 await event.answer(text, show_alert=True)
-            except exceptions.TelegramBadRequest:
-                pass
         elif isinstance(event, types.Message):
-            try:
+            with suppress(exceptions.TelegramBadRequest):
                 await event.reply(text)
-            except exceptions.TelegramBadRequest:
-                pass
