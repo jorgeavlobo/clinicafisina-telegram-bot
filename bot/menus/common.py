@@ -19,11 +19,10 @@ from aiogram.types import (
 )
 from aiogram.fsm.context import FSMContext
 
-from bot.config import MENU_TIMEOUT, MESSAGE_TIMEOUT
+from bot.config           import MENU_TIMEOUT, MESSAGE_TIMEOUT
 from bot.utils.fsm_helpers import clear_keep_role
 
 __all__ = ["back_button", "cancel_back_kbd", "start_menu_timeout"]
-
 
 # ───────────────────────── botões / teclados ─────────────────────────
 def back_button() -> InlineKeyboardButton:
@@ -40,8 +39,7 @@ def cancel_back_kbd() -> ReplyKeyboardMarkup:
         one_time_keyboard=False,
     )
 
-
-# ───────────────────────── timeout do menu ─────────────────────────
+# ───────────────────────── timeout helpers ─────────────────────────
 async def _hide_menu_after(
     bot: Bot,
     chat_id: int,
@@ -50,15 +48,15 @@ async def _hide_menu_after(
     menu_timeout: int,
     message_timeout: int,
 ) -> None:
-    """Remove o inline-keyboard após `menu_timeout` s."""
+    """Remove o inline-kbd após `menu_timeout` s e envia aviso temporário."""
     try:
         await asyncio.sleep(menu_timeout)
 
         data = await state.get_data()
         if data.get("menu_msg_id") != msg_id:
-            return                                   # outro menu já foi aberto
+            return                                   # outro menu já activo
 
-        # ① usar argumentos nomeados → evita ValidationError do aiogram/pydantic
+        # remove teclado (usar kwargs → evita ValidationError)
         with suppress(exceptions.TelegramBadRequest):
             await bot.edit_message_reply_markup(
                 chat_id=chat_id,
@@ -66,7 +64,7 @@ async def _hide_menu_after(
                 reply_markup=None,
             )
 
-        # limpa registos do menu mas mantém active_role
+        # limpa registo de menu mas preserva active_role
         await clear_keep_role(state)
         await state.update_data(menu_msg_id=None, menu_chat_id=None)
 
@@ -79,11 +77,13 @@ async def _hide_menu_after(
         with suppress(exceptions.TelegramBadRequest):
             await warn.delete()
 
-    except Exception:            # nunca deixar a Task rebentar em background
+    except Exception:
+        # não deixar a task rebentar em background
         pass
 
 
-def start_menu_timeout(
+# ───────────────────────── API pública ─────────────────────────
+async def start_menu_timeout(
     bot: Bot,
     message: Message,
     state: FSMContext,
@@ -91,23 +91,20 @@ def start_menu_timeout(
     message_timeout: int = MESSAGE_TIMEOUT,
 ) -> None:
     """
-    (Re)inicia o cronómetro que esconde o menu por inactividade.
-
-    • Cancela o task anterior (se existir) para garantir que só um cronómetro
-      está activo por utilizador.
+    Cancela a task anterior (se existir) e agenda uma nova.
+    Guarda a task no FSM sob a chave «_menu_timeout_task».
     """
-    # ② cancelar cronómetro antigo
-    old_task: Optional[asyncio.Task] = (await state.get_data()).get("_menu_timeout_task")
+    # cancelar task anterior (se ainda estiver a correr)
+    data = await state.get_data()
+    old_task: Optional[asyncio.Task] = data.get("_menu_timeout_task")
     if old_task and not old_task.done():
         old_task.cancel()
 
-    new_task = asyncio.create_task(
+    # criar nova task
+    task = asyncio.create_task(
         _hide_menu_after(
             bot, message.chat.id, message.message_id,
             state, menu_timeout, message_timeout,
         )
     )
-    asyncio.create_task(new_task)   # guarda-se no FSM
-    asyncio.get_event_loop()
-    # guarda referência para poder cancelar da próxima vez
-    state.update_data(_menu_timeout_task=new_task)
+    await state.update_data(_menu_timeout_task=task)
