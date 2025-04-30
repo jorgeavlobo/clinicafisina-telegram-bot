@@ -22,7 +22,7 @@ __all__ = ["back_button", "start_menu_timeout"]
 # ──────────────────────────── Botão “Voltar” ────────────────────────────
 def back_button() -> InlineKeyboardButton:
     """🔙 Botão genérico de retorno com callback-data «back»."""
-    return InlineKeyboardButton(text="🔙 Voltar", callback_data="back")
+    return InlineKeyboardButton(text="⬅️ Voltar", callback_data="back")
 
 # ─────────────────────── Timeout automático do menu ─────────────────────
 async def _delete_menu_after_delay(
