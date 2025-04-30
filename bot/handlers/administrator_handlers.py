@@ -23,7 +23,7 @@ def _agenda_kbd() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="📆 Geral",         callback_data="agenda:geral")],
             [InlineKeyboardButton(text="🩺 Fisioterapeuta", callback_data="agenda:fisios")],
-            [ [back_button()] ],
+            [back_button()],
         ]
     )
 
@@ -32,7 +32,7 @@ def _users_kbd() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="🔍 Procurar", callback_data="users:search")],
             [InlineKeyboardButton(text="➕ Adicionar", callback_data="users:add")],
-            [ [back_button()] ],
+            [back_button()],
         ]
     )
 
@@ -82,7 +82,7 @@ async def admin_main_nav(cb: CallbackQuery, state: FSMContext):
 @router.callback_query(
     StateFilter(AdminMenuStates.AGENDA),
     F.data.in_(["agenda:geral", "agenda:fisios"]))
-async def agenda_placeholders(cb: CallbackQuery, state: FSMContext):     # <- nome correcto
+async def agenda_placeholders(cb: CallbackQuery, state: FSMContext):
     await cb.answer("🚧 Placeholder – em desenvolvimento", show_alert=True)
     try:
         await cb.message.delete()
