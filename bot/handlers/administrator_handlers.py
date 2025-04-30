@@ -28,7 +28,7 @@ def _agenda_kbd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton("📆 Geral",               callback_data="agenda:geral")],
-            [InlineKeyboardButton("🩺 Escolher Fisioterapeuta", callback_data="agenda:fisios")],
+            [InlineKeyboardButton("🩺 Fisioterapeuta", callback_data="agenda:fisios")],
             [back_button()],
         ]
     )
@@ -37,8 +37,8 @@ def _agenda_kbd() -> InlineKeyboardMarkup:
 def _users_kbd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton("🔍 Procurar", callback_data="users:search")],
-            [InlineKeyboardButton("➕ Adicionar", callback_data="users:add")],
+            [InlineKeyboardButton(text="🔍 Procurar", callback_data="users:search")],
+            [InlineKeyboardButton(text="➕ Adicionar", callback_data="users:add")],
             [back_button()],
         ]
     )
