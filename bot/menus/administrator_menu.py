@@ -6,27 +6,25 @@ __all__ = ["build_menu", "build_user_type_kbd"]
 
 
 def build_menu() -> InlineKeyboardMarkup:
-    """
-    Menu principal (NÃO inclui botão Voltar).
-    """
+    """Menu principal de administrador (NÃO tem botão Voltar)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="👥 Utilizadores", callback_data="admin:users")],
-            [InlineKeyboardButton(text="📅 Agenda",       callback_data="admin:agenda")],
-            [InlineKeyboardButton(text="📨 Mensagens",    callback_data="admin:messages")],
+            [InlineKeyboardButton("🗂 Utilizadores", callback_data="admin:users")],
+            [InlineKeyboardButton("📅 Agenda",       callback_data="admin:agenda")],
+            [InlineKeyboardButton("💬 Mensagens",    callback_data="admin:messages")],
         ]
     )
 
 
-# ───── teclado “Escolha do tipo de utilizador” ─────
+# ───────────── teclado “Escolha do tipo de utilizador” ─────────────
 def build_user_type_kbd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Paciente",       callback_data="role:patient")],
-            [InlineKeyboardButton(text="Cuidador",       callback_data="role:caregiver")],
-            [InlineKeyboardButton(text="Fisioterapeuta", callback_data="role:physiotherapist")],
-            [InlineKeyboardButton(text="Contabilista",   callback_data="role:accountant")],
-            [InlineKeyboardButton(text="Administrador",  callback_data="role:administrator")],
-            back_button(),          # ⬅️ Voltar
+            [InlineKeyboardButton("Paciente",        callback_data="role:patient")],
+            [InlineKeyboardButton("Cuidador",        callback_data="role:caregiver")],
+            [InlineKeyboardButton("Fisioterapeuta",  callback_data="role:physiotherapist")],
+            [InlineKeyboardButton("Contabilista",    callback_data="role:accountant")],
+            [InlineKeyboardButton("Administrador",   callback_data="role:administrator")],
+            [back_button()],          # ← tem de estar dentro de lista
         ]
     )
