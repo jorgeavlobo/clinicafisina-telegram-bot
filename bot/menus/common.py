@@ -16,11 +16,11 @@ __all__ = ["back_button", "start_menu_timeout"]
 # ─────────────────────────── Botão “Voltar” ────────────────────────────
 def back_button() -> InlineKeyboardButton:
     """
-    🔵 Botão de retorno (callback-data = «back»).
+    ⬅️ Botão de retorno (callback-data = «back»).
     *Devolve o próprio botão* (não uma lista) para que cada teclado
     decida se o quer pôr numa linha própria: `[back_button()]`.
     """
-    return InlineKeyboardButton(text="🔵 Voltar", callback_data="back")
+    return InlineKeyboardButton(text="⬅️ Voltar", callback_data="back")
 
 # ─────────────────────── Timeout automático do menu ─────────────────────
 async def _delete_menu_after_delay(
