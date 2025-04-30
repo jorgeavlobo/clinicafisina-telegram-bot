@@ -1,56 +1,94 @@
 # bot/utils/validators.py
 """
-Funções utilitárias de validação.
-Todas levantam ValueError com mensagem legível em caso de input inválido.
+Validações e normalizações usadas em todo o projecto.
+
+Cada função levanta ValueError com mensagem legível quando o input é inválido.
 """
 
+from __future__ import annotations
+
 import re
-from datetime import datetime
+from datetime import datetime, date
 from typing import Tuple
 
+# ─────────────────────────── datas ────────────────────────────
+_DATE_RE = re.compile(r"^(?P<d>\d{2})[-/](?P<m>\d{2})[-/](?P<y>\d{4})$")
 
-# ───────────── data (dd-MM-yyyy ou dd/MM/yyyy) ─────────────
-DATE_RE = re.compile(r"^(?P<d>\d{2})[-/](?P<m>\d{2})[-/](?P<y>\d{4})$")
 
-
-def valid_date(date_str: str) -> datetime.date:
-    m = DATE_RE.match(date_str.strip())
+def valid_date(value: str) -> date:
+    """
+    Aceita 'dd-MM-aaaa' ou 'dd/MM/aaaa'.
+    Garante ano ≥ 1900 e não no futuro.
+    """
+    m = _DATE_RE.fullmatch(value.strip())
     if not m:
-        raise ValueError("Formato inválido (usa dd-MM-aaaa).")
-    d, m_, y = map(int, (m["d"], m["m"], m["y"]))
+        raise ValueError("Formato inválido (use dd-MM-aaaa).")
+    d, mth, y = map(int, (m["d"], m["m"], m["y"]))
     try:
-        dt = datetime(year=y, month=m_, day=d).date()
+        dt = datetime(year=y, month=mth, day=d).date()
     except ValueError:
         raise ValueError("Data impossível.")
-    if dt.year < 1900 or dt > datetime.now().date():
+    if not (1900 <= dt.year <= datetime.now().year):
         raise ValueError("Ano fora do intervalo 1900-hoje.")
     return dt
 
 
-# ───────────── e-mail ─────────────
-EMAIL_RE = re.compile(r"^[\w\.-]+@[\w\.-]+\.\w{2,}$")
+# ─────────────────────────── e-mail ────────────────────────────
+_EMAIL_RE = re.compile(r"^[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}$")
 
 
-def valid_email(email: str) -> str:
-    if not EMAIL_RE.match(email.strip()):
+def valid_email(value: str) -> str:
+    value = value.strip()
+    if not _EMAIL_RE.fullmatch(value):
         raise ValueError("Endereço de e-mail inválido.")
-    return email.strip()
+    return value
 
 
-# ───────────── telemóvel Portugal ─────────────
+# ───────────────────── telemóvel Portugal ─────────────────────
 def valid_pt_phone(num: str) -> str:
+    """
+    Valida número de telemóvel português (9 dígitos começando por 9).
+    Devolve o número tal como veio (apenas dígitos).
+    """
     if not num.isdigit() or len(num) != 9 or not num.startswith("9"):
         raise ValueError("Telemóvel PT deve ter 9 dígitos e começar por 9.")
     return num
 
 
-# ───────────── NIF Portugal ─────────────
+# ─────────────────────── NIF Portugal ────────────────────────
 def valid_pt_nif(nif: str) -> str:
+    """
+    Valida NIF português usando algoritmo de controlo.
+    """
     if not (nif.isdigit() and len(nif) == 9):
         raise ValueError("NIF PT deve ter 9 dígitos.")
-    digits = list(map(int, nif))
-    check = sum(d * (9 - i) for i, d in enumerate(digits[:-1])) % 11
-    check = 0 if check in (0, 1) else 11 - check
-    if check != digits[-1]:
+    digs = list(map(int, nif))
+    chk = sum(d * (9 - i) for i, d in enumerate(digs[:-1])) % 11
+    chk = 0 if chk in (0, 1) else 11 - chk
+    if chk != digs[-1]:
         raise ValueError("NIF PT inválido.")
     return nif
+
+
+# ──────────────── indicativo de país genérico ────────────────
+_CC_RE = re.compile(r"^(?:\+|00)?(\d{1,4})$")
+
+
+def normalize_phone_cc(raw: str) -> Tuple[str, str]:
+    """
+    Normaliza o indicativo do país.
+
+    Exemplos aceites  →  devolve («display», «digits»)
+        '+351'  → ('+351', '351')
+        '351'   → ('+351', '351')
+        '00351' → ('+351', '351')
+        '+44'   → ('+44',  '44')
+
+    Levanta ValueError se contiver algo além de dígitos, '+' ou '00'.
+    """
+    raw = raw.strip()
+    m = _CC_RE.fullmatch(raw)
+    if not m:
+        raise ValueError("Indicativo deve conter apenas dígitos, '+', ou '00'.")
+    digits = m.group(1).lstrip("0") or "0"
+    return f"+{digits}", digits
