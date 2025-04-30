@@ -21,6 +21,7 @@ from .physiotherapist_handlers import router as physio_router
 from .accountant_handlers import router as accountant_router
 from .administrator_handlers import router as admin_router
 from .debug_handlers import router as debug_router
+from .add_user_handlers import router as add_user_router
 
 routers: List[Router] = [
     system_router,
@@ -31,6 +32,7 @@ routers: List[Router] = [
     accountant_router,
     admin_router,
     debug_router,
+    add_user_router,
 ]
 
 def register_routers(dp: Dispatcher) -> None:

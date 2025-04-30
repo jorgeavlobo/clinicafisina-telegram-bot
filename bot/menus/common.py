@@ -1,28 +1,38 @@
 # bot/menus/common.py
 """
-Utilitários partilhados por todos os menus inline.
-• back_button()  – devolve um InlineKeyboardButton “Voltar”.
-• start_menu_timeout() – elimina automaticamente o menu se ficar inactivo.
+Botões e utilitários de UI partilhados.
+Inclui:
+• back_button()                 – inline “Voltar”
+• cancel_back_kbd()             – custom reply “Regressar / Cancelar”
+• start_menu_timeout()          – elimina menu por inactividade
 """
+
 import asyncio
 from aiogram import Bot, exceptions
-from aiogram.types import InlineKeyboardButton, Message
+from aiogram.types import (
+    InlineKeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton, Message,
+)
 from aiogram.fsm.context import FSMContext
 
 from bot.config import MENU_TIMEOUT, MESSAGE_TIMEOUT
 
-__all__ = ["back_button", "start_menu_timeout"]
+__all__ = ["back_button", "cancel_back_kbd", "start_menu_timeout"]
 
-# ─────────────────────────── Botão “Voltar” ────────────────────────────
+# ─────────── Botão “Voltar” (inline) ───────────
 def back_button() -> InlineKeyboardButton:
-    """
-    ⬅️ Botão de retorno (callback-data = «back»).
-    *Devolve o próprio botão* (não uma lista) para que cada teclado
-    decida se o quer pôr numa linha própria: `[back_button()]`.
-    """
-    return InlineKeyboardButton(text="⬅️ Voltar", callback_data="back")
+    return InlineKeyboardButton(text="🔵 Voltar", callback_data="back")
 
-# ─────────────────────── Timeout automático do menu ─────────────────────
+# ─────────── Teclado “Regressar / Cancelar” ───────────
+def cancel_back_kbd() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="↩️ Regressar à opção anterior"),
+                   KeyboardButton(text="❌ Cancelar processo de adição")]],
+        resize_keyboard=True,
+        one_time_keyboard=False,
+    )
+
+# ─────────── Timeout automático do menu (inalterado) ───────────
 async def _delete_menu_after_delay(
     bot: Bot,
     chat_id: int,
@@ -33,7 +43,7 @@ async def _delete_menu_after_delay(
 ) -> None:
     await asyncio.sleep(menu_timeout)
     if (await state.get_data()).get("menu_msg_id") != msg_id:
-        return                              # já não é o menu activo
+        return
     try:
         await bot.delete_message(chat_id, msg_id)
     except exceptions.TelegramBadRequest:
@@ -45,8 +55,6 @@ async def _delete_menu_after_delay(
         "Se precisar, use /start ou o botão «Menu».",
     )
     await state.update_data(menu_msg_id=None, menu_chat_id=None)
-
-    # apagar o aviso passados ‹message_timeout› s
     asyncio.create_task(_delete_inactivity_message(
         bot, chat_id, warn.message_id, message_timeout
     ))
