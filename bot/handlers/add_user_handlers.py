@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Optional
+
 from aiogram import Router, F, types, exceptions
 from aiogram.fsm.context import FSMContext
 
@@ -31,11 +32,16 @@ async def _cache(state: FSMContext, mid: int) -> None:
     d.setdefault("flow_msgs", []).append(mid)
     await state.update_data(flow_msgs=d["flow_msgs"])
 
-async def _purge(bot: types.Bot, state: FSMContext) -> None:
+async def _purge(bot: types.Bot, state: FSMContext, fallback_chat: int) -> None:
+    """
+    Remove todas as mensagens registadas no wizard.
+    Usa menu_chat_id se existir; caso contrário recorre a fallback_chat.
+    """
     d = await state.get_data()
+    chat_id = d.get("menu_chat_id") or fallback_chat
     for mid in d.get("flow_msgs", []):
         try:
-            await bot.delete_message(d["menu_chat_id"], mid)
+            await bot.delete_message(chat_id, mid)
         except exceptions.TelegramBadRequest:
             pass
     await state.update_data(flow_msgs=[])
@@ -48,7 +54,7 @@ async def _ask(msg: types.Message, prompt: str, state: FSMContext, *, kbd: bool 
     await _cache(state, m.message_id)
 
 async def _cancel_flow(msg: types.Message, state: FSMContext):
-    await _purge(msg.bot, state)
+    await _purge(msg.bot, state, msg.chat.id)
     await msg.answer("❌ Processo cancelado.", reply_markup=types.ReplyKeyboardRemove())
     await state.clear()
 
@@ -63,7 +69,7 @@ async def _handle_back_cancel(msg: types.Message, state: FSMContext, prev: Optio
     if txt.startswith("↩️"):
         if prev is None:
             await state.set_state(AddUserFlow.CHOOSING_ROLE)
-            await msg.answer("⁠", reply_markup=types.ReplyKeyboardRemove())
+            await msg.answer("⁠", reply_markup=types.ReplyKeyboardRemove())  # zero-width char
             menu = await msg.answer(
                 "👤 *Adicionar utilizador* — escolha o tipo:",
                 parse_mode="Markdown",
@@ -202,7 +208,7 @@ async def cb_edit(cb: types.CallbackQuery, state: FSMContext):
 
 # ───────────── util final ─────────────
 async def _finish(cb: types.CallbackQuery, state: FSMContext, text: str):
-    await _purge(cb.bot, state)
+    await _purge(cb.bot, state, cb.message.chat.id)
     try:
         await cb.message.edit_text(text, parse_mode="Markdown")
     except exceptions.TelegramBadRequest:
