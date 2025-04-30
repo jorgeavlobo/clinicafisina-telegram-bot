@@ -1,13 +1,16 @@
 # bot/menus/common.py
 """
 Botões e utilitários de UI partilhados.
-Inclui:
-• back_button()                 – inline “Voltar”
-• cancel_back_kbd()             – custom reply “Regressar / Cancelar”
-• start_menu_timeout()          – elimina menu por inactividade
+
+• back_button() / cancel_back_kbd()
+• start_menu_timeout() – oculta o menu depois de X s
+  (agora sem apagar «active_role»)
 """
 
+from __future__ import annotations
 import asyncio
+from contextlib import suppress
+
 from aiogram import Bot, exceptions
 from aiogram.types import (
     InlineKeyboardButton,
@@ -16,24 +19,27 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 
 from bot.config import MENU_TIMEOUT, MESSAGE_TIMEOUT
+from bot.utils.fsm_helpers import clear_keep_role   # ← mantém active_role
 
 __all__ = ["back_button", "cancel_back_kbd", "start_menu_timeout"]
 
-# ─────────── Botão “Voltar” (inline) ───────────
+# ─────────── Botão “Voltar” ───────────
 def back_button() -> InlineKeyboardButton:
     return InlineKeyboardButton(text="🔵 Voltar", callback_data="back")
 
-# ─────────── Teclado “Regressar / Cancelar” ───────────
+# ─────────── Teclado Regressar/Cancelar ───────────
 def cancel_back_kbd() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="↩️ Regressar à opção anterior"),
-                   KeyboardButton(text="❌ Cancelar processo de adição")]],
+        keyboard=[[
+            KeyboardButton(text="↩️ Regressar à opção anterior"),
+            KeyboardButton(text="❌ Cancelar processo de adição"),
+        ]],
         resize_keyboard=True,
         one_time_keyboard=False,
     )
 
-# ─────────── Timeout automático do menu (inalterado) ───────────
-async def _delete_menu_after_delay(
+# ─────────── timeout do menu ───────────
+async def _hide_menu_after(
     bot: Bot,
     chat_id: int,
     msg_id: int,
@@ -42,31 +48,31 @@ async def _delete_menu_after_delay(
     message_timeout: int,
 ) -> None:
     await asyncio.sleep(menu_timeout)
-    if (await state.get_data()).get("menu_msg_id") != msg_id:
-        return
-    try:
-        await bot.delete_message(chat_id, msg_id)
-    except exceptions.TelegramBadRequest:
+
+    data = await state.get_data()
+    if data.get("menu_msg_id") != msg_id:
+        # já existe outro menu – este não é o activo
         return
 
-    warn = await bot.send_message(
-        chat_id,
-        f"⌛ O menu ficou inactivo durante {menu_timeout} s e foi fechado.\n"
-        "Se precisar, use /start ou o botão «Menu».",
-    )
-    await state.update_data(menu_msg_id=None, menu_chat_id=None)
-    asyncio.create_task(_delete_inactivity_message(
-        bot, chat_id, warn.message_id, message_timeout
-    ))
+    # remove inline-keyboard (ou a mensagem inteira, se preferires)
+    with suppress(exceptions.TelegramBadRequest):
+        await bot.edit_message_reply_markup(chat_id, msg_id, reply_markup=None)
 
-async def _delete_inactivity_message(
-    bot: Bot, chat_id: int, msg_id: int, delay: int
-) -> None:
-    await asyncio.sleep(delay)
+    # limpa FSM **preservando** o perfil activo
+    await clear_keep_role(state)
+
+    # aviso temporário
     try:
-        await bot.delete_message(chat_id, msg_id)
+        warn = await bot.send_message(
+            chat_id,
+            f"⌛️ O menu ficou inactivo durante {menu_timeout}s e foi ocultado.\n"
+            "Use /start para o reabrir.",
+        )
+        await asyncio.sleep(message_timeout)
+        await warn.delete()
     except exceptions.TelegramBadRequest:
         pass
+
 
 def start_menu_timeout(
     bot: Bot,
@@ -75,7 +81,12 @@ def start_menu_timeout(
     menu_timeout: int = MENU_TIMEOUT,
     message_timeout: int = MESSAGE_TIMEOUT,
 ) -> None:
-    asyncio.create_task(_delete_menu_after_delay(
-        bot, message.chat.id, message.message_id,
-        state, menu_timeout, message_timeout,
-    ))
+    """
+    Inicia (ou reinicia) a contagem decrescente para esconder o menu.
+    """
+    asyncio.create_task(
+        _hide_menu_after(
+            bot, message.chat.id, message.message_id,
+            state, menu_timeout, message_timeout,
+        )
+    )
