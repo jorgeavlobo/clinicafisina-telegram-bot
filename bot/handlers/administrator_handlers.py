@@ -1,18 +1,20 @@
 # bot/handlers/administrator_handlers.py
+"""
+Menu de administrador
+• Protegido por RoleFilter("administrator")
+• Timeout automático (60 s) com mensagem/auto-eliminação
+• Todos os botões 🔵 Voltar funcionam em qualquer nível
+"""
 from __future__ import annotations
 
 from aiogram import Router, F, exceptions
 from aiogram.filters import StateFilter
-from aiogram.types import (
-    CallbackQuery,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-)
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
-from bot.filters.role_filter import RoleFilter
+from bot.filters.role_filter      import RoleFilter
 from bot.states.admin_menu_states import AdminMenuStates, AddUserStates
-from bot.menus.common import back_button, start_menu_timeout
+from bot.menus.common             import back_button, start_menu_timeout
 from bot.menus.administrator_menu import (
     build_menu as _main_menu_kbd,
     build_user_type_kbd,
@@ -21,13 +23,13 @@ from bot.menus.administrator_menu import (
 router = Router(name="administrator")
 router.callback_query.filter(RoleFilter("administrator"))
 
-# ────────────── builders dos sub-menus ──────────────
+# ─────────────── builders de sub-menus ────────────────
 def _agenda_kbd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📆 Geral",         callback_data="agenda:geral")],
             [InlineKeyboardButton(text="🩺 Fisioterapeuta", callback_data="agenda:fisios")],
-            [back_button()],
+            [back_button()],                               # linha própria
         ]
     )
 
@@ -40,16 +42,15 @@ def _users_kbd() -> InlineKeyboardMarkup:
         ]
     )
 
-# ───────────────────────── helpers ─────────────────────────
+# ───────────────────── helpers ────────────────────────
 async def _replace_menu(
-    cb: CallbackQuery,
+    cb:    CallbackQuery,
     state: FSMContext,
-    text: str,
-    kbd: InlineKeyboardMarkup,
+    text:  str,
+    kbd:   InlineKeyboardMarkup,
 ) -> None:
     """
-    Edita a mensagem-menu (se possível) ou envia nova.
-    Em ambos os casos reactiva o timeout de inactividade.
+    Edita ou substitui a mensagem-menu e reactiva o timeout.
     """
     try:
         await cb.message.edit_text(text, reply_markup=kbd, parse_mode="Markdown")
@@ -60,7 +61,6 @@ async def _replace_menu(
         await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
 
     start_menu_timeout(cb.bot, msg, state)
-
 
 async def _show_main_menu(cb: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AdminMenuStates.MAIN)
@@ -73,42 +73,38 @@ async def _show_main_menu(cb: CallbackQuery, state: FSMContext) -> None:
 )
 async def admin_main_nav(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    match cb.data:
-        case "admin:agenda":
-            await state.set_state(AdminMenuStates.AGENDA)
-            await _replace_menu(cb, state, "📅 *Agenda* — seleccione:", _agenda_kbd())
-        case "admin:users":
-            await state.set_state(AdminMenuStates.USERS)
-            await _replace_menu(cb, state, "👥 *Utilizadores* — seleccione:", _users_kbd())
-        case "admin:messages":
-            await state.set_state(AdminMenuStates.MESSAGES)
-            await _replace_menu(
-                cb,
-                state,
-                "🚧 *Mensagens* – em desenvolvimento",
-                InlineKeyboardMarkup(inline_keyboard=[[back_button()]]),
-            )
+    if cb.data == "admin:agenda":
+        await state.set_state(AdminMenuStates.AGENDA)
+        await _replace_menu(cb, state, "📅 *Agenda* — seleccione:", _agenda_kbd())
+    elif cb.data == "admin:users":
+        await state.set_state(AdminMenuStates.USERS)
+        await _replace_menu(cb, state, "👥 *Utilizadores* — seleccione:", _users_kbd())
+    else:
+        await state.set_state(AdminMenuStates.MESSAGES)
+        await _replace_menu(
+            cb, state,
+            "🚧 *Mensagens* – em desenvolvimento",
+            InlineKeyboardMarkup(inline_keyboard=[[back_button()]]),
+        )
 
-# ─────────────────────────── Agenda ─────────────────────────
+# ─────────────────────────── Agenda ──────────────────────────────
 @router.callback_query(
     StateFilter(AdminMenuStates.AGENDA),
     F.data.in_(["agenda:geral", "agenda:fisios"]),
 )
-async def agenda_placeholders(cb: CallbackQuery, state: FSMContext):
+async def agenda_placeholders(cb: CallbackQuery, _state: FSMContext):
     await cb.answer("🚧 Placeholder – em desenvolvimento", show_alert=True)
     try:
         await cb.message.delete()
     except exceptions.TelegramBadRequest:
         pass
-    # mantém o timeout activo; Menu já não está visível mas
-    # continua a ser considerado “activo” até expirar.
 
 @router.callback_query(StateFilter(AdminMenuStates.AGENDA), F.data == "back")
 async def agenda_back(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await _show_main_menu(cb, state)
 
-# ─────────────────────── Utilizadores ──────────────────────
+# ─────────────────────── Utilizadores ────────────────────────────
 @router.callback_query(
     StateFilter(AdminMenuStates.USERS),
     F.data.in_(["users:search", "users:add"]),
@@ -118,8 +114,7 @@ async def users_menu_options(cb: CallbackQuery, state: FSMContext):
     if cb.data == "users:search":
         await state.set_state(AdminMenuStates.USERS_SEARCH)
         await _replace_menu(
-            cb,
-            state,
+            cb, state,
             "🚧 *Procurar utilizador* – em desenvolvimento",
             InlineKeyboardMarkup(inline_keyboard=[[back_button()]]),
         )
@@ -127,8 +122,7 @@ async def users_menu_options(cb: CallbackQuery, state: FSMContext):
         await state.set_state(AdminMenuStates.USERS_ADD)
         await state.set_state(AddUserStates.CHOOSING_ROLE)
         await _replace_menu(
-            cb,
-            state,
+            cb, state,
             "👤 *Adicionar utilizador* — escolha o tipo:",
             build_user_type_kbd(),
         )
@@ -138,11 +132,12 @@ async def users_back(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await _show_main_menu(cb, state)
 
+# ─────── Voltar a partir de qualquer sub-estado de Utilizadores ───────
 @router.callback_query(
     StateFilter((
         AdminMenuStates.USERS_SEARCH,
         AdminMenuStates.USERS_ADD,
-        AddUserStates.CHOOSING_ROLE,   # <-- apanha o fluxo “Adicionar”
+        AddUserStates.CHOOSING_ROLE,
     )),
     F.data == "back",
 )
@@ -151,13 +146,13 @@ async def users_suboption_back(cb: CallbackQuery, state: FSMContext):
     await state.set_state(AdminMenuStates.USERS)
     await _replace_menu(cb, state, "👥 *Utilizadores* — seleccione:", _users_kbd())
 
-# ──────────────────────── Mensagens ────────────────────────
+# ─────────────────────── Mensagens ────────────────────────────────
 @router.callback_query(StateFilter(AdminMenuStates.MESSAGES), F.data == "back")
 async def messages_back(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await _show_main_menu(cb, state)
 
-# ───── Fluxo “Adicionar Utilizador” – passo 1 (placeholder) ─────
+# ─────────── Fluxo “Adicionar Utilizador” – passo 1 (placeholder) ───────
 @router.callback_query(StateFilter(AddUserStates.CHOOSING_ROLE), F.data.startswith("role:"))
 async def adduser_choose_role(cb: CallbackQuery, state: FSMContext):
     role = cb.data.split(":", 1)[1]
