@@ -39,7 +39,6 @@ _ROLE_MENU = {
     "administrator":   _admin,
 }
 
-
 # ───────────────────────── helpers ─────────────────────────
 async def _purge_old_menu(bot: Bot, state: FSMContext) -> None:
     """Apaga do chat o último menu registado na FSM (se existir)."""
@@ -110,11 +109,13 @@ async def show_menu(
     )
     await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=chat_id)
 
-    # 5) estado FSM base
+    # 5) estado FSM base (apenas para administrador)
     if active == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
-    else:
-        await state.set_state(None)   # manter FSM “limpa”
 
     # 6) (re)inicia timeout automático
     start_menu_timeout(bot, msg, state)
+
+    # 7) menus “normais” ficam com FSM limpa depois de arrancar o cronómetro
+    if active != "administrator":
+        await state.set_state(None)
