@@ -4,7 +4,7 @@ from bot.menus.common import back_button
 
 __all__ = ["build_menu", "build_user_type_kbd"]
 
-
+# ──────────────── menu principal ────────────────
 def build_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -14,7 +14,7 @@ def build_menu() -> InlineKeyboardMarkup:
         ]
     )
 
-
+# ─────────── teclado “Escolha do tipo de utilizador” ───────────
 def build_user_type_kbd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -23,6 +23,6 @@ def build_user_type_kbd() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Fisioterapeuta",  callback_data="role:physiotherapist")],
             [InlineKeyboardButton(text="Contabilista",    callback_data="role:accountant")],
             [InlineKeyboardButton(text="Administrador",   callback_data="role:administrator")],
-            [back_button()],      # ← linha correcta
+            [back_button()],   # ← linha própria, sem parênteses a mais
         ]
     )
