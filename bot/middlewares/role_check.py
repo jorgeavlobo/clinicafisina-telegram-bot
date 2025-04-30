@@ -1,38 +1,64 @@
 # bot/middlewares/role_check.py
 """
-Middleware que liga telegram_user_id ao registo da BD e injeta:
-    data["user"]   -> dict com o registo completo
-    data["roles"]  -> list[str] (minúsculas)
+Garante que o utilizador tem um perfil ativo antes de continuar.
+
+Se o FSM estiver em MenuStates.WAIT_ROLE_CHOICE (selector de perfil),
+o middleware deixa passar – é exactamente esse handler que vai definir
+o perfil ativo.  Também ignora CallbackQueries cujo callback_data
+comece por "role:" (botões do selector).
 """
 
-from typing import Any, Dict, List
+from __future__ import annotations
+
 import logging
+from typing import Any, Callable, Dict
 
-from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject
+from aiogram import BaseMiddleware, types
+from aiogram.fsm.context import FSMContext
 
-from bot.database.connection import get_pool      # usa pool global
-from bot.database import queries as q
+from bot.states.menu_states import MenuStates
 
 log = logging.getLogger(__name__)
 
 
 class RoleCheckMiddleware(BaseMiddleware):
-    async def __call__(  # type: ignore[override]
+    async def __call__(
         self,
-        handler,
-        event: TelegramObject,
+        handler: Callable[[types.TelegramObject, Dict[str, Any]], Any],
+        event: types.TelegramObject,
         data: Dict[str, Any],
     ) -> Any:
-        tg_user = data.get("event_from_user")
-        if tg_user:
-            pool = await get_pool()
-            user = await q.get_user_by_telegram_id(pool, tg_user.id)
-            if user:
-                roles: List[str] = await q.get_user_roles(pool, user["user_id"])
-                roles = [r.lower() for r in roles]
-                data["user"] = user
-                data["roles"] = roles
-                log.debug("RoleCheck: user %s roles=%s", user["user_id"], roles)
+
+        state: FSMContext = data["state"]
+
+        # ------------------------------------------------------------------
+        # • Se estamos no selector de perfis, deixa passar.
+        # • Se o callback é "role:xyz" (botões do selector), deixa passar.
+        # ------------------------------------------------------------------
+        if await state.get_state() == MenuStates.WAIT_ROLE_CHOICE.state:
+            return await handler(event, data)
+
+        if isinstance(event, types.CallbackQuery) and \
+           event.data and event.data.startswith("role:"):
+            return await handler(event, data)
+
+        # ------------------------------------------------------------------
+        # Fora isso, exige perfil ativo no FSM.
+        # ------------------------------------------------------------------
+        user_data = await state.get_data()
+        if not user_data.get("active_role"):
+            if isinstance(event, types.CallbackQuery):
+                await event.answer(
+                    "Ainda não tem permissões atribuídas. "
+                    "Contacte a receção/administração.",
+                    show_alert=True,
+                )
+            elif isinstance(event, types.Message):
+                await event.reply(
+                    "Ainda não tem permissões atribuídas. "
+                    "Contacte a receção/administração.",
+                )
+            log.info("Blocado por falta de role ativo – user %s", event.from_user.id)
+            return
 
         return await handler(event, data)
