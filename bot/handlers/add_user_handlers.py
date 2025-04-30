@@ -63,7 +63,8 @@ async def _handle_back_cancel(
         if prev_state is None:  # Estamos no primeiro passo – voltar ao menu de tipos
             await state.set_state(AddUserFlow.CHOOSING_ROLE)
             # Remover teclado reply
-            await msg.answer(" ", reply_markup=types.ReplyKeyboardRemove())
+            # Remove o teclado reply com um carácter invisível (zero‑width)
+            await msg.answer("⁠", reply_markup=types.ReplyKeyboardRemove())
             # Mostrar novamente inline keyboard dos tipos
             role_msg = await msg.answer(
                 "👤 *Adicionar utilizador* — escolha o tipo:",
