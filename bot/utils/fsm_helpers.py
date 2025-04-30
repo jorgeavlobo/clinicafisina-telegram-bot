@@ -1,3 +1,4 @@
+# bot/utils/fsm_helpers.py
 """
 Helpers para lidar com FSM sem perder o `active_role`
 que o RoleCheckMiddleware precisa para autorizar o utilizador.
