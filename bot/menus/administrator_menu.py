@@ -6,7 +6,6 @@ __all__ = ["build_menu", "build_user_type_kbd"]
 
 
 def build_menu() -> InlineKeyboardMarkup:
-    """Menu principal de administrador."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="👥 Utilizadores", callback_data="admin:users")],
@@ -17,7 +16,6 @@ def build_menu() -> InlineKeyboardMarkup:
 
 
 def build_user_type_kbd() -> InlineKeyboardMarkup:
-    """Teclado – escolha do tipo de utilizador (placeholder)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="Paciente",        callback_data="role:patient")],
@@ -25,6 +23,6 @@ def build_user_type_kbd() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Fisioterapeuta",  callback_data="role:physiotherapist")],
             [InlineKeyboardButton(text="Contabilista",    callback_data="role:accountant")],
             [InlineKeyboardButton(text="Administrador",   callback_data="role:administrator")],
-            [back_button()],      # já devolve InlineKeyboardButton
+            [ [back_button()] ],      # linha correcta
         ]
     )
