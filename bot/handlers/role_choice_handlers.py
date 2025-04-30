@@ -2,7 +2,7 @@
 """
 Selector de perfil quando o utilizador tem vários roles.
 • Inline-keyboard com timeout (60 s)
-• Regista-se como menu ativo para o ActiveMenuMiddleware
+• Regista-se como menu activo para o ActiveMenuMiddleware
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from contextlib import suppress
 from typing import Iterable
 
 from aiogram import Router, F, types, exceptions
+from aiogram.filters import StateFilter            # ← NOVO
 from aiogram.fsm.context import FSMContext
 
 from bot.menus import show_menu
@@ -31,7 +32,6 @@ LABELS_PT = {
 }
 
 def role_label(role: str) -> str:
-    """Devolve etiqueta legível em PT (fallback para role puro)."""
     return LABELS_PT.get(role, role.capitalize())
 
 # ───────────────── API pública ─────────────────
@@ -41,15 +41,10 @@ async def ask_role(
     state: FSMContext,
     roles: Iterable[str],
 ) -> None:
-    """
-    Mostra inline-keyboard com os vários perfis.
-    """
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[[
-            types.InlineKeyboardButton(
-                text=role_label(r),
-                callback_data=f"role:{r}",
-            ) for r in roles
+            types.InlineKeyboardButton(role_label(r), callback_data=f"role:{r}")
+            for r in roles
         ]]
     )
 
@@ -66,7 +61,9 @@ async def ask_role(
         role_selector_marker=msg.message_id,
     )
 
-    asyncio.create_task(_expire_selector(bot, msg.chat.id, msg.message_id, state))
+    asyncio.create_task(
+        _expire_selector(bot, msg.chat.id, msg.message_id, state)
+    )
 
 # ───────────────── timeout ─────────────────
 async def _expire_selector(
@@ -94,8 +91,8 @@ async def _expire_selector(
 
 # ───────────────── callback ─────────────────
 @router.callback_query(
+    StateFilter(MenuStates.WAIT_ROLE_CHOICE),      # ← filtro correcto
     F.data.startswith("role:"),
-    state=MenuStates.WAIT_ROLE_CHOICE,
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext):
     role = cb.data.split(":", 1)[1]
@@ -107,5 +104,4 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext):
         await cb.message.edit_reply_markup(reply_markup=None)
 
     await cb.answer(f"Perfil {role_label(role)} selecionado!")
-
     await show_menu(cb.bot, cb.message.chat.id, state, [role])
