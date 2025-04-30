@@ -2,17 +2,13 @@
 """
 Fluxo completo “Adicionar Utilizador”.
 
-Correções desta versão
-──────────────────────
-1. **Regressar à opção anterior** a partir do primeiro passo volta a mostrar o
-   teclado inline de escolha de *User Role* e remove de imediato o teclado
-   "custom reply".
-2. O teclado "custom reply" desaparece sempre que saímos do formulário para
-   o menu de tipos.
-3. Quando regressamos e o teclado inline aparece, o par `(menu_msg_id,
-   menu_chat_id)` é actualizado — o `ActiveMenuMiddleware` já não bloqueia
-   cliques nos botões.
-4. Mensagem "Passo anterior" substituída pelo prompt correcto.
+Últimas correcções
+──────────────────
+• Corrigido SyntaxError: função _close_summary agora está completa.
+• Importações limpas.
+• Garantido que o teclado reply é removido ao regressar ao menu de tipos.
+• Regista correctamente menu_msg_id/menu_chat_id sempre que o teclado inline
+  é mostrado, para não ser bloqueado pelo ActiveMenuMiddleware.
 """
 
 from __future__ import annotations
@@ -64,33 +60,29 @@ async def _handle_back_cancel(
 
     # ───────── Regressar à opção anterior ─────────
     if txt.startswith("↩️"):
-        if prev_state is None:
-            # Estamos no primeiro passo – voltar ao menu de tipos
+        if prev_state is None:  # Estamos no primeiro passo – voltar ao menu de tipos
             await state.set_state(AddUserFlow.CHOOSING_ROLE)
-            # 1) remover o teclado reply
-            await msg.answer(" ", reply_markup=types.ReplyKeyboardRemove())
-            # 2) mostrar novamente o teclado inline com tipos
+            # Remover teclado reply
+            await msg.answer(" ", reply_markup=types.ReplyKeyboardRemove())
+            # Mostrar novamente inline keyboard dos tipos
             role_msg = await msg.answer(
                 "👤 *Adicionar utilizador* — escolha o tipo:",
                 parse_mode="Markdown",
                 reply_markup=build_user_type_kbd(),
             )
-            # 3) registar menu activo para o middleware
+            # Registar menu activo
             await state.update_data(menu_msg_id=role_msg.message_id,
                                     menu_chat_id=role_msg.chat.id)
             return True
-        # Passo normal: voltar ao anterior
+        # Caso normal: voltar um passo atrás
         await _prev_step(state, prev_state)
         await _ask(msg, PROMPTS[prev_state])
         return True
     return False
 
 async def _cancel_add(msg: types.Message, state: FSMContext):
-    """Aborta todo o fluxo."""
-    await msg.answer(
-        "❌ Adição de utilizador cancelada.",
-        reply_markup=types.ReplyKeyboardRemove(),
-    )
+    await msg.answer("❌ Adição de utilizador cancelada.",
+                     reply_markup=types.ReplyKeyboardRemove())
     await state.clear()
 
 # ───────────────────────── FIRST_NAME ─────────────────────────
@@ -198,16 +190,28 @@ async def confirm_cancel(cb: types.CallbackQuery, state: FSMContext):
     await cb.answer("Operação cancelada.", show_alert=True)
     await _close_summary(cb, state, "❌ Processo cancelado.")
 
+
 @router.callback_query(AddUserFlow.CONFIRM_DATA, F.data == "adduser:confirm")
 async def confirm_save(cb: types.CallbackQuery, state: FSMContext):
     await cb.answer("💾 A guardar…", show_alert=False)
     # TODO: inserir na BD
     await _close_summary(cb, state, "✅ Utilizador adicionado com sucesso!")
 
+
 @router.callback_query(AddUserFlow.CONFIRM_DATA, F.data == "adduser:edit")
 async def confirm_edit(cb: types.CallbackQuery, state: FSMContext):
     await cb.answer()
     await cb.message.edit_reply_markup(reply_markup=None)
     await cb.message.answer("🚧 Edição ainda não implementada.")
+    # Mantém-se em CONFIRM_DATA ou muda para EDIT_FIELD futuramente
 
-async def _close_summary(cb: types.CallbackQuery, state
+
+# ───────────────────────── util ─────────────────────────
+async def _close_summary(cb: types.CallbackQuery, state: FSMContext, text: str):
+    """Fecha a mensagem-resumo e limpa estado/menu activo."""
+    try:
+        await cb.message.edit_text(text, parse_mode="Markdown")
+    except exceptions.TelegramBadRequest:
+        pass
+    await state.clear()
+    await state.update_data(menu_msg_id=None, menu_chat_id=None)
