@@ -1,30 +1,40 @@
 # bot/handlers/add_user_handlers.py
 """
-Fluxo “Adicionar Utilizador”.
+Fluxo completo “Adicionar Utilizador”.
 
-Este router é importado em handlers/__init__.py.
-Lógica:
-1. Iniciado em administrator_handlers depois de CHOOSE_TYPE.
-2. Cada passo valida input, permite «Regressar» (volta ao passo anterior)
-   ou «Cancelar» (termina o processo e limpa teclado).
-3. No final mostra resumo + inline buttons Confirmar / Editar / Cancelar.
+• Corrige regressão do botão «Regressar à opção anterior».
+• Mostra sempre o prompt correcto quando se volta atrás.
+• Armazena o ID da mensagem‑resumo para que o ActiveMenuMiddleware aceite
+  callbacks dos botões Confirmar / Editar / Cancelar.
+• Implementa handlers iniciais para esses 3 botões (placeholders funcionais).
 """
 
 from __future__ import annotations
 
-from aiogram import Router, F, types
+from aiogram import Router, F, types, exceptions
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
 from bot.states.add_user_flow   import AddUserFlow
-from bot.menus.common           import cancel_back_kbd
+from bot.menus.common           import cancel_back_kbd, back_button
+from bot.menus.administrator_menu import build_user_type_kbd
 from bot.utils                  import validators as V
 
 router = Router(name="add_user")
 
+# ─────────────────── PROMPTS por estado ───────────────────
+PROMPTS: dict[AddUserFlow, str] = {
+    AddUserFlow.FIRST_NAME: "Primeiro(s) nome(s):",
+    AddUserFlow.LAST_NAME: "Apelido(s):",
+    AddUserFlow.DATE_OF_BIRTH: "Data de nascimento (dd-MM-aaaa):",
+    AddUserFlow.PHONE_COUNTRY: "Indicativo do país para o telemóvel?\n(Escreva 351 para Portugal ou prefixo internacional)",
+    AddUserFlow.PHONE_NUMBER: "Número de telemóvel (sem indicativo):",
+    AddUserFlow.EMAIL: "Endereço de e-mail:",
+}
 
 # ─────────────────────── helpers ───────────────────────
-async def _ask(message: types.Message, text: str, *, kbd=True):
+async def _ask(message: types.Message, text: str, *, kbd: bool = True):
+    """Envia pergunta com (ou sem) teclado de navegação."""
     await message.answer(
         text,
         reply_markup=cancel_back_kbd() if kbd else None,
@@ -33,30 +43,62 @@ async def _ask(message: types.Message, text: str, *, kbd=True):
 async def _prev_step(state: FSMContext, prev: AddUserFlow):
     await state.set_state(prev)
 
-# ─────────────────── entry: FIRST_NAME ───────────────────
+async def _handle_back_cancel(
+    msg: types.Message,
+    state: FSMContext,
+    prev_state: AddUserFlow | None,
+) -> bool:
+    """Trata Regressar/Cancelar. Devolve True se interceptou."""
+    txt = msg.text.lower().strip()
+    # Cancelar em qualquer passo – limpa tudo
+    if txt.startswith("❌"):
+        await _cancel_add(msg, state)
+        return True
+
+    # Regressar à opção anterior
+    if txt.startswith("↩️"):
+        if prev_state is None:  # Estamos no primeiro passo: voltar ao Menu de tipos
+            await state.set_state(AddUserFlow.CHOOSING_ROLE)
+            # Mostra novamente inline keyboard dos tipos
+            await msg.answer(
+                "👤 *Adicionar utilizador* — escolha o tipo:",
+                parse_mode="Markdown",
+                reply_markup=build_user_type_kbd(),
+            )
+            return True
+        # Passo normal: voltar ao anterior e voltar a perguntar
+        await _prev_step(state, prev_state)
+        await _ask(msg, PROMPTS[prev_state])
+        return True
+    return False
+
+async def _cancel_add(msg: types.Message, state: FSMContext):
+    """Aborta todo o fluxo."""
+    await msg.answer(
+        "❌ Adição de utilizador cancelada.",
+        reply_markup=types.ReplyKeyboardRemove(),
+    )
+    await state.clear()
+
+# ───────────────────────── FIRST_NAME ─────────────────────────
 @router.message(StateFilter(AddUserFlow.FIRST_NAME))
 async def first_name_step(msg: types.Message, state: FSMContext):
-    txt = msg.text.strip()
-    if txt.lower().startswith("❌"):
-        await _cancel_add(msg, state)
+    if await _handle_back_cancel(msg, state, None):  # None → volta ao menu roles
         return
-    if txt.lower().startswith("↩️"):
-        # não há passo anterior – mantemos estado
-        return
-    await state.update_data(first_name=txt)
-    await _ask(msg, "Apelido(s):")
+    await state.update_data(first_name=msg.text.strip())
+    await _ask(msg, PROMPTS[AddUserFlow.LAST_NAME])
     await state.set_state(AddUserFlow.LAST_NAME)
 
-# ─────────────────── LAST_NAME ───────────────────
+# ───────────────────────── LAST_NAME ─────────────────────────
 @router.message(StateFilter(AddUserFlow.LAST_NAME))
 async def last_name_step(msg: types.Message, state: FSMContext):
     if await _handle_back_cancel(msg, state, AddUserFlow.FIRST_NAME):
         return
     await state.update_data(last_name=msg.text.strip())
-    await _ask(msg, "Data de nascimento (dd-MM-aaaa):")
+    await _ask(msg, PROMPTS[AddUserFlow.DATE_OF_BIRTH])
     await state.set_state(AddUserFlow.DATE_OF_BIRTH)
 
-# ─────────────────── DATE_OF_BIRTH ───────────────────
+# ─────────────────────── DATE_OF_BIRTH ───────────────────────
 @router.message(StateFilter(AddUserFlow.DATE_OF_BIRTH))
 async def dob_step(msg: types.Message, state: FSMContext):
     if await _handle_back_cancel(msg, state, AddUserFlow.LAST_NAME):
@@ -67,21 +109,20 @@ async def dob_step(msg: types.Message, state: FSMContext):
         await msg.reply(f"⚠️ {e}")
         return
     await state.update_data(date_of_birth=str(dob))
-    # País do telefone
-    await _ask(msg, "Indicativo do país para o telemóvel?\n(Escreva 351 para Portugal ou prefixo internacional)")
+    await _ask(msg, PROMPTS[AddUserFlow.PHONE_COUNTRY])
     await state.set_state(AddUserFlow.PHONE_COUNTRY)
 
-# ─────────────────── PHONE_COUNTRY ───────────────────
+# ─────────────────────── PHONE_COUNTRY ───────────────────────
 @router.message(StateFilter(AddUserFlow.PHONE_COUNTRY))
 async def phone_country_step(msg: types.Message, state: FSMContext):
     if await _handle_back_cancel(msg, state, AddUserFlow.DATE_OF_BIRTH):
         return
     cc = msg.text.replace("+", "").lstrip("0").strip()
     await state.update_data(phone_cc=cc)
-    await _ask(msg, "Número de telemóvel (sem indicativo):")
+    await _ask(msg, PROMPTS[AddUserFlow.PHONE_NUMBER])
     await state.set_state(AddUserFlow.PHONE_NUMBER)
 
-# ─────────────────── PHONE_NUMBER ───────────────────
+# ─────────────────────── PHONE_NUMBER ───────────────────────
 @router.message(StateFilter(AddUserFlow.PHONE_NUMBER))
 async def phone_number_step(msg: types.Message, state: FSMContext):
     if await _handle_back_cancel(msg, state, AddUserFlow.PHONE_COUNTRY):
@@ -99,10 +140,10 @@ async def phone_number_step(msg: types.Message, state: FSMContext):
         await msg.reply(f"⚠️ {e}")
         return
     await state.update_data(phone=num)
-    await _ask(msg, "Endereço de e-mail:")
+    await _ask(msg, PROMPTS[AddUserFlow.EMAIL])
     await state.set_state(AddUserFlow.EMAIL)
 
-# ─────────────────── EMAIL ───────────────────
+# ───────────────────────── EMAIL ─────────────────────────
 @router.message(StateFilter(AddUserFlow.EMAIL))
 async def email_step(msg: types.Message, state: FSMContext):
     if await _handle_back_cancel(msg, state, AddUserFlow.PHONE_NUMBER):
@@ -113,31 +154,9 @@ async def email_step(msg: types.Message, state: FSMContext):
         await msg.reply(f"⚠️ {e}")
         return
     await state.update_data(email=email)
-    # Aqui seguiríamos com WANT_ADDRESS etc.
     await _summarise(msg, state)
 
-# ─────────────────── helpers comuns ───────────────────
-async def _handle_back_cancel(
-    msg: types.Message,
-    state: FSMContext,
-    prev_state: AddUserFlow,
-) -> bool:
-    """Trata “Regressar”/“Cancelar”. Devolve True se interceptou."""
-    txt = msg.text.lower().strip()
-    if txt.startswith("❌"):
-        await _cancel_add(msg, state)
-        return True
-    if txt.startswith("↩️"):
-        await _prev_step(state, prev_state)
-        await msg.answer("Passo anterior.", reply_markup=cancel_back_kbd())
-        return True
-    return False
-
-async def _cancel_add(msg: types.Message, state: FSMContext):
-    await msg.answer("❌ Adição de utilizador cancelada.",
-                     reply_markup=types.ReplyKeyboardRemove())
-    await state.clear()
-
+# ─────────────────── SUMÁRIO & CONFIRMAÇÃO ───────────────────
 async def _summarise(msg: types.Message, state: FSMContext):
     data = await state.get_data()
     summary = (
@@ -155,6 +174,37 @@ async def _summarise(msg: types.Message, state: FSMContext):
             [types.InlineKeyboardButton(text="❌ Cancelar",  callback_data="adduser:cancel")],
         ]
     )
-    await msg.answer(summary, parse_mode="Markdown", reply_markup=kbd,
-                     reply_markup_remove=True)
+    sent = await msg.answer(summary, parse_mode="Markdown", reply_markup=kbd,
+                            reply_markup_remove=True)
+    # Regista esta mensagem como «menu» activo para ActiveMenuMiddleware
+    await state.update_data(menu_msg_id=sent.message_id, menu_chat_id=sent.chat.id)
     await state.set_state(AddUserFlow.CONFIRM_DATA)
+
+# ────────────────── CALLBACKS Confirmar / Editar / Cancelar ──────────────────
+@router.callback_query(AddUserFlow.CONFIRM_DATA, F.data == "adduser:cancel")
+async def confirm_cancel(cb: types.CallbackQuery, state: FSMContext):
+    await cb.answer("Operação cancelada.", show_alert=True)
+    await _close_summary(cb, state, "❌ Processo cancelado.")
+
+@router.callback_query(AddUserFlow.CONFIRM_DATA, F.data == "adduser:confirm")
+async def confirm_save(cb: types.CallbackQuery, state: FSMContext):
+    await cb.answer("💾 A guardar…", show_alert=False)
+    # TODO: inserir na BD
+    await _close_summary(cb, state, "✅ Utilizador adicionado com sucesso!")
+
+@router.callback_query(AddUserFlow.CONFIRM_DATA, F.data == "adduser:edit")
+async def confirm_edit(cb: types.CallbackQuery, state: FSMContext):
+    await cb.answer()
+    # TODO: mostrar lista de campos editáveis
+    await cb.message.edit_reply_markup(reply_markup=None)
+    await cb.message.answer("🚧 Edição ainda não implementada.")
+    # Mantém‑se em CONFIRM_DATA (ou muda para EDIT_FIELD quando implementado)
+
+# ───────────────────── util edit/close summary ─────────────────────
+async def _close_summary(cb: types.CallbackQuery, state: FSMContext, text: str):
+    try:
+        await cb.message.edit_text(text, parse_mode="Markdown")
+    except exceptions.TelegramBadRequest:
+        pass
+    await state.clear()
+    await state.update_data(menu_msg_id=None, menu_chat_id=None)
