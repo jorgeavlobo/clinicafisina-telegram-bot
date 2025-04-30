@@ -3,11 +3,10 @@
 Garante que o utilizador tem um perfil ativo antes de continuar.
 
 Se o FSM estiver em MenuStates.WAIT_ROLE_CHOICE (selector de perfil),
-o middleware deixa passar – é exactamente esse handler que vai definir
-o perfil ativo.  Também ignora CallbackQueries cujo callback_data
+o middleware deixa passar – é exatamente esse handler que vai definir
+o perfil ativo. Também ignora CallbackQueries cujo callback_data
 comece por "role:" (botões do selector).
 """
-
 from __future__ import annotations
 
 import logging
@@ -20,7 +19,6 @@ from bot.states.menu_states import MenuStates
 
 log = logging.getLogger(__name__)
 
-
 class RoleCheckMiddleware(BaseMiddleware):
     async def __call__(
         self,
@@ -32,9 +30,12 @@ class RoleCheckMiddleware(BaseMiddleware):
         state: FSMContext = data["state"]
 
         # ------------------------------------------------------------------
-        # • Se estamos no selector de perfis, deixa passar.
-        # • Se o callback é "role:xyz" (botões do selector), deixa passar.
+        # • Permitir sempre o comando /start (início do fluxo de login).
+        # • Se estamos no seletor de perfis, deixa passar.
+        # • Se o callback é "role:xyz" (botão de seleção de perfil), deixa passar.
         # ------------------------------------------------------------------
+        if isinstance(event, types.Message) and getattr(event, "text", "").startswith("/start"):
+            return await handler(event, data)
         if await state.get_state() == MenuStates.WAIT_ROLE_CHOICE.state:
             return await handler(event, data)
 
@@ -58,7 +59,7 @@ class RoleCheckMiddleware(BaseMiddleware):
                     "Ainda não tem permissões atribuídas. "
                     "Contacte a receção/administração.",
                 )
-            log.info("Blocado por falta de role ativo – user %s", event.from_user.id)
+            log.info("Bloqueado por falta de role ativo – user %s", event.from_user.id)
             return
 
         return await handler(event, data)

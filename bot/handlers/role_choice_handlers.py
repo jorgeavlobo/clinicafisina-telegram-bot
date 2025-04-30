@@ -1,119 +1,100 @@
 # bot/handlers/role_choice_handlers.py
 """
-Selector de perfil quando o utilizador tem vários roles.
+Handlers para a seleção de perfil (role) após login.
 
-• Inline-keyboard com timeout de 60 s
-• Grava «active_role» no FSM antes de mostrar o menu principal
+Este módulo define o handler de CallbackQuery para a escolha de um perfil ativo quando
+o utilizador tem múltiplos roles. Após o utilizador selecionar um role, este é armazenado
+como `active_role` no FSM e o menu correspondente é exibido. Qualquer menu de seleção 
+anterior é removido do chat.
 """
-
-from __future__ import annotations
-
-import asyncio
-from contextlib import suppress
-from typing import Iterable
-
-from aiogram import Router, F, types, exceptions
+from aiogram import Router, types, F, exceptions
 from aiogram.filters import StateFilter
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
-from bot.menus import show_menu
 from bot.states.menu_states import MenuStates
+from bot.states.admin_menu_states import AdminMenuStates
 
 router = Router(name="role_choice")
 
-_TIMEOUT = 60  # segundos
-
-# ───────────── labels PT ─────────────
-_LABELS_PT = {
-    "patient":         "Paciente",
-    "caregiver":       "Cuidador",
-    "physiotherapist": "Fisioterapeuta",
-    "accountant":      "Contabilista",
-    "administrator":   "Administrador",
-}
-
-
-def role_label(role: str) -> str:
-    return _LABELS_PT.get(role, role.capitalize())
-
-
-# ───────────── API pública ─────────────
-async def ask_role(
-    bot: types.Bot,
-    chat_id: int,
-    state: FSMContext,
-    roles: Iterable[str],
-) -> None:
-    """Mostra o selector de perfis e inicia o cronómetro de timeout."""
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(role_label(r),
-                                                     callback_data=f"role:{r}")
-                          for r in roles]]
-    )
-
-    msg = await bot.send_message(
-        chat_id,
-        "🔰 Escolha o perfil que pretende utilizar:",
-        reply_markup=keyboard,
-    )
-
-    await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
-    await state.update_data(
-        menu_msg_id=msg.message_id,
-        menu_chat_id=msg.chat.id,
-        role_selector_marker=msg.message_id,
-    )
-
-    asyncio.create_task(
-        _expire_selector(bot, msg.chat.id, msg.message_id, state)
-    )
-
-
-# ───────────── timeout ─────────────
-async def _expire_selector(
-    bot: types.Bot,
-    chat_id: int,
-    msg_id: int,
-    state: FSMContext,
-) -> None:
-    """Remove o selector após _TIMEOUT e avisa (aviso auto-apaga-se)."""
-    await asyncio.sleep(_TIMEOUT)
+@router.callback_query(StateFilter(MenuStates.WAIT_ROLE_CHOICE), F.data.startswith("role:"))
+async def handle_role_choice(callback: CallbackQuery, state: FSMContext) -> None:
+    """
+    Handler chamado quando o utilizador escolhe um role no menu de seleção de perfis.
+    Define o role escolhido como ativo, limpa o estado de seleção de perfil e apresenta o menu correspondente.
+    """
+    # Extrair o código/nome do role do callback_data (após "role:")
+    role_code = callback.data.split(":", 1)[1]
+    # Obter a lista de roles do utilizador armazenada no FSM (definida durante o /start)
     data = await state.get_data()
-    if data.get("role_selector_marker") != msg_id:
-        return  # o utilizador já escolheu
+    roles_list = data.get("roles", [])
+    # Validar que o role selecionado pertence de facto aos roles do utilizador
+    if role_code.lower() not in [r.lower() for r in roles_list]:
+        # Se o role não estiver autorizado, informar o utilizador e ignorar
+        await callback.answer("Perfil inválido ou não autorizado.", show_alert=True)
+        return
 
-    await state.clear()
-    with suppress(exceptions.TelegramBadRequest):
-        await bot.edit_message_reply_markup(chat_id, msg_id, reply_markup=None)
+    # Armazena o role escolhido como ativo no FSM antes de prosseguir
+    await state.update_data(active_role=role_code)
+    # Sair do estado de seleção de perfil (encerra MenuStates.WAIT_ROLE_CHOICE, mantendo os dados)
+    await state.set_state(None)
 
-    warn = await bot.send_message(
-        chat_id,
-        "⏳ Tempo expirado. Envie /start para escolher de novo.",
-    )
-    await asyncio.sleep(_TIMEOUT)
-    with suppress(exceptions.TelegramBadRequest):
-        await bot.delete_message(chat_id, warn.message_id)
+    # Remover a mensagem de seleção de perfil agora que já há escolha
+    try:
+        await callback.message.delete()
+    except exceptions.TelegramBadRequest:
+        # Ignorar erro se a mensagem já não existir ou não puder ser apagada
+        pass
 
-
-# ───────────── callback de escolha ─────────────
-@router.callback_query(
-    StateFilter(MenuStates.WAIT_ROLE_CHOICE),
-    F.data.startswith("role:"),
-)
-async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
-    """Tratamento da escolha de perfil."""
-    role = cb.data.split(":", 1)[1]   # ex.: "administrator"
-
-    # 1) remover imediatamente o teclado do selector
-    with suppress(exceptions.TelegramBadRequest):
-        await cb.message.edit_reply_markup(reply_markup=None)
-
-    # 2) limpar qualquer estado intermédio e gravar o papel activo
-    await state.clear()
-    await state.update_data(active_role=role)
-
-    # 3) abrir o menu respectivo
-    await show_menu(cb.bot, cb.message.chat.id, state, [role])
-
-    # 4) feedback ao utilizador
-    await cb.answer(f"Perfil {role_label(role)} seleccionado!")
+    # Determinar se o role escolhido requer definir um estado específico de menu
+    if role_code == "administrator":
+        # Utilizador escolheu perfil de Administrador – definir estado MAIN do menu admin
+        await state.set_state(AdminMenuStates.MAIN)
+        # Construir o menu principal do Administrador (teclado inline)
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="📅 Agenda", callback_data="admin:agenda")],
+                [InlineKeyboardButton(text="👥 Utilizadores", callback_data="admin:users")],
+                [InlineKeyboardButton(text="✉️ Mensagens", callback_data="admin:messages")]
+            ]
+        )
+        # Enviar mensagem do menu de Administrador
+        menu_msg = await callback.message.answer(
+            "Menu Administrador – selecione uma opção:",
+            reply_markup=keyboard
+        )
+    elif role_code == "patient":
+        # Perfil de Paciente – permanece no estado padrão (nenhum estado específico definido)
+        # Construir menu principal de Paciente (exemplo de opções)
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="📆 Minhas Consultas", callback_data="patient:appointments")],
+                [InlineKeyboardButton(text="💊 Terapia", callback_data="patient:therapy")]
+            ]
+        )
+        menu_msg = await callback.message.answer(
+            "Menu Paciente – selecione uma opção:",
+            reply_markup=keyboard
+        )
+    elif role_code == "caregiver":
+        # Perfil de Cuidador – permanece no estado padrão
+        # Construir menu principal de Cuidador (exemplo de opções)
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="👤 Paciente Assistido", callback_data="caregiver:patient_info")],
+                [InlineKeyboardButton(text="💬 Mensagens", callback_data="caregiver:messages")]
+            ]
+        )
+        menu_msg = await callback.message.answer(
+            "Menu Cuidador – selecione uma opção:",
+            reply_markup=keyboard
+        )
+    else:
+        # Outros perfis (fallback): simplesmente confirmar a ativação do perfil
+        menu_msg = await callback.message.answer(
+            f"Perfil *{role_code}* ativado.",
+            parse_mode="Markdown"
+        )
+    # Armazenar o novo menu enviado como menu ativo (menu_msg_id e menu_chat_id) para callbacks futuros
+    await state.update_data(menu_msg_id=menu_msg.message_id, menu_chat_id=menu_msg.chat.id)
+    # A partir deste ponto, o menu apropriado foi exibido e o utilizador pode interagir com ele.
