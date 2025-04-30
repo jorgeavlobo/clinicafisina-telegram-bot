@@ -134,7 +134,7 @@ async def users_back(cb: CallbackQuery, state: FSMContext):
 
 # ─────────── Utilizadores: voltar de sub-opções (Pesquisar/Adicionar) ───────────
 @router.callback_query(
-    StateFilter(AdminMenuStates.USERS_SEARCH) | StateFilter(AdminMenuStates.USERS_ADD),
+    StateFilter((AdminMenuStates.USERS_SEARCH, AdminMenuStates.USERS_ADD)),
     F.data == "back"
 )
 async def users_suboption_back(cb: CallbackQuery, state: FSMContext):
