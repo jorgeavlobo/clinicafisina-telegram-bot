@@ -23,8 +23,7 @@ def _to_dict(rec: Record | None) -> Optional[Dict[str, Any]]:
 # ───────────────────────── consultas de leitura ─────────────────────────
 async def get_user_by_telegram_id(pool: Pool, tg_id: int) -> Optional[Dict[str, Any]]:
     rec = await pool.fetchrow(
-        "SELECT * FROM users WHERE telegram_user_id = $1",
-        tg_id,
+        "SELECT * FROM users WHERE telegram_user_id = $1", tg_id
     )
     return _to_dict(rec)
 
@@ -172,17 +171,14 @@ async def add_user(
     phone_cc: str,
     phone: str,
     email: str,
-    created_by: str,        # UUID do staff que cria
+    created_by: Optional[str] = None,          # ← agora opcional
 ) -> str:
     """
-    Cria utilizador + role + e-mail + telefone primários numa única transacção.
-    • Guarda o telefone na forma «cc+numero» (ex.: 351916932985).
-    • `date_of_birth` pode ser None.
+    Cria utilizador + role + e-mail + telefone primários.
     Devolve o user_id (UUID).
     """
     async with pool.acquire() as conn, conn.transaction():
-        # users
-        user_id: str = await conn.fetchval(
+        user_id = await conn.fetchval(
             """
             INSERT INTO users (first_name, last_name, date_of_birth, created_by)
             VALUES ($1,$2,$3,$4)
@@ -191,10 +187,8 @@ async def add_user(
             first_name, last_name, date_of_birth, created_by,
         )
 
-        # role principal
         role_id = await conn.fetchval(
-            "SELECT role_id FROM roles WHERE role_name = $1",
-            role,
+            "SELECT role_id FROM roles WHERE role_name=$1", role
         )
         if role_id:
             await conn.execute(
@@ -202,7 +196,6 @@ async def add_user(
                 user_id, role_id,
             )
 
-        # e-mail primário
         await conn.execute(
             """
             INSERT INTO user_emails (user_id, email, is_primary)
@@ -211,7 +204,6 @@ async def add_user(
             user_id, email,
         )
 
-        # telefone primário (indicativo+numero)
         await conn.execute(
             """
             INSERT INTO user_phones (user_id, phone_number, is_primary)
@@ -220,4 +212,4 @@ async def add_user(
             user_id, f"{phone_cc}{phone}",
         )
 
-    return user_id
+    return str(user_id)
