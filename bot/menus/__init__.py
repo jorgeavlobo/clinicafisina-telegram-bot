@@ -1,25 +1,37 @@
 # bot/menus/__init__.py
 """
-Mostra o teclado principal adequado ao papel activo
-(e escolhe papel quando o utilizador tem vários).
+Mostra o teclado principal adequado ao perfil activo.
+
+– Se o utilizador tiver vários perfis e ainda não tiver escolhido um,
+  delega no selector ask_role (handlers.role_choice_handlers).
+– Mantém «active_role» depois de limpezas do FSM (usa clear_keep_role).
+– Inicia/renova o timeout de 60 s para esconder o menu inactivo.
 """
+
+from __future__ import annotations
+
+import logging
+from contextlib import suppress
+from typing import List
+
 from aiogram import Bot, exceptions
-from aiogram.types import (
-    InlineKeyboardButton, InlineKeyboardMarkup,
-    ReplyKeyboardRemove
-)
+from aiogram.types import ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
 
-from bot.states.menu_states       import MenuStates
+from bot.states.menu_states import MenuStates
 from bot.states.admin_menu_states import AdminMenuStates
-from .common                      import start_menu_timeout   # ← timeout
+from bot.utils.fsm_helpers import clear_keep_role
+from bot.menus.common import start_menu_timeout          # timeout p/ esconder
+from bot.handlers.role_choice_handlers import ask_role   # selector de perfil
 
-# builders individuais
+# builders individuais de cada perfil
 from .patient_menu         import build_menu as _patient
 from .caregiver_menu       import build_menu as _caregiver
 from .physiotherapist_menu import build_menu as _physio
 from .accountant_menu      import build_menu as _accountant
 from .administrator_menu   import build_menu as _admin
+
+log = logging.getLogger(__name__)
 
 _ROLE_MENU = {
     "patient":         _patient,
@@ -29,66 +41,54 @@ _ROLE_MENU = {
     "administrator":   _admin,
 }
 
-def _choose_role_kbd(roles: list[str]) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=r.title(), callback_data=f"role:{r}")]
-            for r in roles
-        ]
-    )
 
+# ───────────────────────── helpers ─────────────────────────
 async def _purge_old_menu(bot: Bot, state: FSMContext) -> None:
     data = await state.get_data()
-    msg_id  = data.get("menu_msg_id")
+    msg_id = data.get("menu_msg_id")
     chat_id = data.get("menu_chat_id")
     if msg_id and chat_id:
-        try:
+        with suppress(exceptions.TelegramBadRequest):
             await bot.delete_message(chat_id, msg_id)
-        except exceptions.TelegramBadRequest:
-            pass
 
+
+# ───────────────────── API pública ────────────────────────
 async def show_menu(
     bot: Bot,
     chat_id: int,
     state: FSMContext,
-    roles: list[str],
+    roles: List[str],
     requested: str | None = None,
 ) -> None:
+    """Envia (ou renova) o menu principal para o role activo."""
 
-    # ── sem papéis ─────────────────────────────────────────────
+    # 0) utilizador sem papéis válidos
     if not roles:
         await bot.send_message(
             chat_id,
             "⚠️ Ainda não tem permissões atribuídas.\n"
-            "Contacte a recepção/administrador.",
+            "Contacte a receção/administrador.",
             reply_markup=ReplyKeyboardRemove(),
         )
-        await state.clear()
+        await clear_keep_role(state)
         return
 
-    # ── determinar papel activo ───────────────────────────────
-    active = requested or (await state.get_data()).get("active_role")
-    if not active:
-        if len(roles) == 1:
-            active = roles[0]
-        else:
+    # 1) determinar o role activo
+    data = await state.get_data()
+    active = requested or data.get("active_role")
+    if active is None:
+        if len(roles) > 1:
+            # ainda não escolheu → delega no selector central
             await _purge_old_menu(bot, state)
-            msg = await bot.send_message(
-                chat_id,
-                "Que perfil pretende usar agora?",
-                reply_markup=_choose_role_kbd(roles),
-            )
-            await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
-            await state.update_data(menu_msg_id=msg.message_id,
-                                    menu_chat_id=chat_id)
-            # ▸ inicia timeout
-            start_menu_timeout(bot, msg, state)
+            await ask_role(bot, chat_id, state, roles)
             return
+        # só há um → assume-o
+        active = roles[0]
 
-    # guardar escolha
+    # 2) guardar a escolha
     await state.update_data(active_role=active)
 
-    # ── builder para o papel ──────────────────────────────────
+    # 3) obter builder adequado
     builder = _ROLE_MENU.get(active)
     if builder is None:
         await bot.send_message(
@@ -98,21 +98,28 @@ async def show_menu(
         )
         return
 
-    # ── remove menu anterior e envia o novo ───────────────────
+    # 4) remover menu antigo e enviar o novo
     await _purge_old_menu(bot, state)
 
-    text = "💻 *Menu:*" if active == "administrator" else f"👤 *{active.title()}* – menu principal"
-    msg  = await bot.send_message(
+    title = (
+        "💻 *Menu administrador:*"
+        if active == "administrator"
+        else f"👤 *{active.title()}* – menu principal"
+    )
+    msg = await bot.send_message(
         chat_id,
-        text,
+        title,
         reply_markup=builder(),
         parse_mode="Markdown",
     )
-    await state.update_data(menu_msg_id=msg.message_id,
-                            menu_chat_id=chat_id)
+    await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=chat_id)
 
-    # ▸ inicia / reinicia timeout de 60 s
-    start_menu_timeout(bot, msg, state)
-
+    # 5) estado base para admin
     if active == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
+    else:
+        # para outros perfis não há estado específico
+        await state.set_state(MenuStates.MENU_ACTIVE)
+
+    # 6) (re)inicia timeout automático
+    start_menu_timeout(bot, msg, state)
