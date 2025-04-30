@@ -13,6 +13,7 @@ from aiogram.fsm.context import FSMContext
 from bot.states.menu_states       import MenuStates
 from bot.states.admin_menu_states import AdminMenuStates
 from .common                      import start_menu_timeout   # ← timeout
+from bot.utils.fsm_helpers        import clear_keep_role
 
 # builders individuais
 from .patient_menu         import build_menu as _patient
@@ -63,7 +64,7 @@ async def show_menu(
             "Contacte a recepção/administrador.",
             reply_markup=ReplyKeyboardRemove(),
         )
-        await state.clear()
+        await clear_keep_role(state)
         return
 
     # ── determinar papel activo ───────────────────────────────
