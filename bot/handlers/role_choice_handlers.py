@@ -3,7 +3,6 @@
 Selector de perfil quando o utilizador tem vários roles.
 
 • Inline-keyboard com timeout de 60 s
-• Após a escolha grava «active_role» no FSM
 """
 
 from __future__ import annotations
@@ -13,15 +12,15 @@ from contextlib import suppress
 from typing import Iterable
 
 from aiogram import Router, F, types, exceptions
-from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
+from aiogram.fsm.context import FSMContext
 
 from bot.menus import show_menu
 from bot.states.menu_states import MenuStates
 
 router = Router(name="role_choice")
 
-_TIMEOUT = 60  # seg.
+_TIMEOUT = 60  # segundos
 
 # ───────────── labels PT ─────────────
 _LABELS_PT = {
@@ -34,6 +33,7 @@ _LABELS_PT = {
 
 
 def role_label(role: str) -> str:
+    """Traduz o identificador interno do role para PT‐BR amigável."""
     return _LABELS_PT.get(role, role.capitalize())
 
 
@@ -44,11 +44,11 @@ async def ask_role(
     state: FSMContext,
     roles: Iterable[str],
 ) -> None:
+    """Mostra o selector de perfis e inicia o cronómetro de timeout."""
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[
-            types.InlineKeyboardButton(role_label(r), callback_data=f"role:{r}")
-            for r in roles
-        ]]
+        inline_keyboard=[[types.InlineKeyboardButton(role_label(r),
+                                                     callback_data=f"role:{r}")
+                          for r in roles]]
     )
 
     msg = await bot.send_message(
@@ -76,10 +76,11 @@ async def _expire_selector(
     msg_id: int,
     state: FSMContext,
 ) -> None:
+    """Remove o selector após _TIMEOUT e avisa (aviso auto-apaga-se)."""
     await asyncio.sleep(_TIMEOUT)
     data = await state.get_data()
     if data.get("role_selector_marker") != msg_id:
-        return  # utilizador já escolheu
+        return  # o utilizador já escolheu
 
     await state.clear()
     with suppress(exceptions.TelegramBadRequest):
@@ -100,19 +101,18 @@ async def _expire_selector(
     F.data.startswith("role:"),
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
-    role = cb.data.split(":", 1)[1]  # ex.: administrator
+    """Tratamento da escolha de perfil."""
+    role = cb.data.split(":", 1)[1]   # ex.: "administrator"
 
     # 1) limpar qualquer estado intermédio
     await state.clear()
 
-    # 2) guardar o papel activo (agora NÃO é apagado)
-    await state.update_data(active_role=role)
+    # 2) abrir o menu respectivo (show_menu grava active_role)
+    await show_menu(cb.bot, cb.message.chat.id, state, [role])
 
     # 3) remover o teclado do selector
     with suppress(exceptions.TelegramBadRequest):
         await cb.message.edit_reply_markup(reply_markup=None)
 
+    # 4) feedback ao utilizador
     await cb.answer(f"Perfil {role_label(role)} seleccionado!")
-
-    # 4) abrir o menu respectivo
-    await show_menu(cb.bot, cb.message.chat.id, state, [role])
