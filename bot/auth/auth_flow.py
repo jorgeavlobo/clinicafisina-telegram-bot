@@ -1,10 +1,11 @@
 # bot/auth/auth_flow.py
 """
-Fluxo de autenticação / onboarding.
+Fluxo de autenticação / onboarding (Aiogram 3).
 
-Se existir perfil para o número partilhado mostra “É você? (Sim/Não)”.
-Esse inline-keyboard expira ao fim de 60 s; o aviso de expiração é
-auto-apagado 60 s depois para evitar clutter.
+• Pede ao utilizador que partilhe o contacto.
+• Se existir perfil: mostra confirmação “É você? (Sim/Não)” com timeout 60 s.
+• Se o contacto tiver vários perfis, apresenta menu de escolha de perfil
+  (role) com timeout, via ask_role().
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import suppress
+from typing import List
 
 from aiogram import types, exceptions
 from aiogram.fsm.context import FSMContext
@@ -21,12 +23,13 @@ from bot.database.connection import get_pool
 from bot.database import queries as q
 from bot.utils.phone import cleanse
 from bot.menus import show_menu
+from bot.handlers.role_choice_handlers import ask_role   # ← NOVO
 
 log = logging.getLogger(__name__)
 
-CONFIRM_TIMEOUT = 60  # segundos
+CONFIRM_TIMEOUT = 60  # seg
 
-# ───────────── teclados ─────────────
+# ───────────────────────── teclados ─────────────────────────
 def contact_keyboard() -> types.ReplyKeyboardMarkup:
     return types.ReplyKeyboardMarkup(
         keyboard=[[types.KeyboardButton(text="📱 Enviar contacto", request_contact=True)]],
@@ -43,7 +46,7 @@ def confirm_keyboard() -> types.InlineKeyboardMarkup:
         ]]
     )
 
-# ───────────── helper de expiração ─────────────
+# ─────────────────────── timeout helper ───────────────────────
 async def _expire_confirm(
     bot: types.Bot,
     chat_id: int,
@@ -51,12 +54,12 @@ async def _expire_confirm(
     state: FSMContext,
     marker_key: str = "confirm_marker",
 ) -> None:
-    """Remove kbd após 60 s e envia aviso que é apagado 60 s depois."""
+    """Remove inline-kbd após 60 s e envia aviso que desaparece 60 s depois."""
     try:
         await asyncio.sleep(CONFIRM_TIMEOUT)
         data = await state.get_data()
-        if data.get(marker_key) != msg_id:          # já houve resposta
-            return
+        if data.get(marker_key) != msg_id:
+            return                              # já houve resposta
 
         await state.clear()
 
@@ -70,11 +73,11 @@ async def _expire_confirm(
         await asyncio.sleep(CONFIRM_TIMEOUT)
         with suppress(exceptions.TelegramBadRequest):
             await bot.delete_message(chat_id, warn.message_id)
-    except Exception:                               # não quebra a app
+    except Exception:
         log.exception("Erro ao expirar confirmação")
 
 
-# ───────────── handlers FSM ─────────────
+# ───────────────────────── handlers ─────────────────────────
 async def start_onboarding(msg: types.Message, state: FSMContext) -> None:
     await state.set_state(AuthStates.WAITING_CONTACT)
     await msg.answer(
@@ -95,7 +98,7 @@ async def handle_contact(msg: types.Message, state: FSMContext) -> None:
     if not user:
         await state.clear()
         await msg.answer(
-            "Número não encontrado. Assim que o seu perfil for criado avisaremos 🙏"
+            "Número não encontrado. Assim que o seu perfil for criado avisaremos. 🙏"
         )
         return
 
@@ -129,12 +132,20 @@ async def confirm_link(cb: types.CallbackQuery, state: FSMContext) -> None:
 
     pool = await get_pool()
     await q.link_telegram_id(pool, user_id, cb.from_user.id)
-    roles = await q.get_user_roles(pool, user_id)
+    roles: List[str] = await q.get_user_roles(pool, user_id)
 
+    # fecha mensagem “É você?” e limpa FSM
     await state.clear()
     await cb.message.edit_text("Ligação concluída! 🎉")
-    await show_menu(cb.bot, cb.message.chat.id, state, roles)
     await cb.answer()
+
+    # vários perfis → menu de escolha com timeout
+    if len(roles) > 1:
+        await ask_role(cb.bot, cb.message.chat.id, state, roles)
+        return
+
+    # um único perfil → mostra menu directamente
+    await show_menu(cb.bot, cb.message.chat.id, state, roles)
 
 
 async def cancel_link(cb: types.CallbackQuery, state: FSMContext) -> None:
