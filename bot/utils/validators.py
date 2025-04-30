@@ -8,6 +8,7 @@ Cada função levanta ValueError com mensagem legível quando o input é inváli
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime, date
 from typing import Tuple
 
@@ -37,11 +38,15 @@ def valid_date(value: str) -> date:
 _EMAIL_RE = re.compile(r"^[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}$")
 
 
+def _strip_invisible(s: str) -> str:
+    """Remove chars categoria Cf (format) e espaços invisíveis."""
+    return "".join(ch for ch in s if unicodedata.category(ch)[0] != "C")
+
 def valid_email(value: str) -> str:
-    value = value.strip()
+    value = _strip_invisible(value).strip()
     if not _EMAIL_RE.fullmatch(value):
         raise ValueError("Endereço de e-mail inválido.")
-    return value
+    return value.lower()
 
 
 # ───────────────────── telemóvel Portugal ─────────────────────
