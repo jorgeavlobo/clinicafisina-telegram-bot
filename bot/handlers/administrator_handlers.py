@@ -108,10 +108,13 @@ async def users_back(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await _show_main_menu(cb, state)
 
-@router.callback_query(
-    StateFilter((AdminMenuStates.USERS_SEARCH, AdminMenuStates.USERS_ADD)),
-    F.data == "back"
-)
+@router.callback_query(F.data == "back")
+async def users_suboption_back(cb: CallbackQuery, state: FSMContext):
+    state_now = await state.get_state()
+    if state_now in [AdminMenuStates.USERS_SEARCH.state, AdminMenuStates.USERS_ADD.state]:
+        await cb.answer()
+        await state.set_state(AdminMenuStates.USERS)
+        await _replace_menu(cb, state, "👥 *Utilizadores* — seleccione:", _users_kbd())
 async def users_suboption_back(cb: CallbackQuery, state: FSMContext):
     await cb.answer("A regressar ao menu anterior...", show_alert=False)
     await state.set_state(AdminMenuStates.USERS)
