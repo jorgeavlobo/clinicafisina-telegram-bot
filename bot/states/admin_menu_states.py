@@ -7,6 +7,7 @@ class AdminMenuStates(StatesGroup):
     MAIN          = State()   # Menu principal "Administrador"
     AGENDA        = State()   # Sub-menu Agenda
     USERS         = State()   # Sub-menu Utilizadores
+    MESSAGES      = State()   # Sub-menu Mensagens  ← NOVO
     USERS_SEARCH  = State()   # Fluxo Procurar (placeholder)
     USERS_ADD     = State()   # Fluxo Adicionar – estado "wrapper"
 
