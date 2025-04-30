@@ -8,7 +8,6 @@ Utilitários partilhados por todos os menus inline.
 • Após apagar o menu, a mensagem de aviso é também apagada
   automaticamente após ‹message_timeout› segundos.
 """
-
 import asyncio
 from typing import Callable, Awaitable
 
@@ -36,11 +35,9 @@ async def _delete_menu_after_delay(
 ) -> None:
     """Tarefa interna: aguarda ‹menu_timeout› s e elimina o menu se ainda existir."""
     await asyncio.sleep(menu_timeout)
-
     data = await state.get_data()
     if data.get("menu_msg_id") != msg_id:
-        return
-
+        return  # o menu ativo já não é este, não apaga
     try:
         await bot.delete_message(chat_id, msg_id)
     except exceptions.TelegramBadRequest:
@@ -55,10 +52,10 @@ async def _delete_menu_after_delay(
     except exceptions.TelegramBadRequest:
         return
 
+    # Limpar registo de menu ativo no FSM
     await state.update_data(menu_msg_id=None, menu_chat_id=None)
-
+    # Agendar remoção da mensagem de aviso após message_timeout
     asyncio.create_task(_delete_inactivity_message(bot, chat_id, inactivity_msg.message_id, message_timeout))
-
 
 async def _delete_inactivity_message(
     bot: Bot,
@@ -84,7 +81,7 @@ def start_menu_timeout(
     Agenda a remoção automática da mensagem-menu após ‹menu_timeout› segundos,
     e a remoção da mensagem de aviso após ‹message_timeout› segundos.
 
-    Deve ser chamada IMEDIATAMENTE depois de enviar o menu e
+    Deve ser chamada IMEDIATAMENTE depois de enviar/editar o menu e
     guardar em FSM:
         await state.update_data(menu_msg_id=msg.message_id, ...)
         common.start_menu_timeout(bot, msg, state)
