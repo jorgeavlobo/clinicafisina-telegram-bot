@@ -184,7 +184,12 @@ async def cb_cancel(cb: types.CallbackQuery, state: FSMContext):
 @router.callback_query(AddUserFlow.CONFIRM_DATA, F.data == "add_ok")
 async def cb_ok(cb: types.CallbackQuery, state: FSMContext):
     d = await state.get_data()
-    pool = cb.bot.pg_pool                            # usa atributo, não subscrito
+    pool = cb.bot.pg_pool
+
+    # ── obter UUID do staff que cria (pode não existir) ──
+    admin = await Q.get_user_by_telegram_id(pool, cb.from_user.id)
+    created_by = admin["user_id"] if admin else None
+
     await Q.add_user(
         pool,
         role=d["role"],
@@ -195,7 +200,7 @@ async def cb_ok(cb: types.CallbackQuery, state: FSMContext):
         phone_cc=d["phone_cc"],
         phone=d["phone"],
         email=d["email"],
-        created_by=str(cb.from_user.id),
+        created_by=created_by,                 # ← UUID ou None
     )
     await cb.answer()
     await _finish(cb, state, "✅ Utilizador adicionado com sucesso!")
