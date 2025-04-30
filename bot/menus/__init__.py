@@ -111,7 +111,7 @@ async def show_menu(
     if active == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
     else:
-        await state.set_state(MenuStates.MENU_ACTIVE)
+        await state.set_state(None)          # ← limpa estado explícito
 
     # 6) (re)inicia timeout
     start_menu_timeout(bot, msg, state)
