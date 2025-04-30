@@ -30,7 +30,7 @@ def _agenda_kbd() -> InlineKeyboardMarkup:
 def _users_kbd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🔍 Procurar", callback_data="users:search")],
+            [InlineKeyboardButton(text="🔍 Procurar",   callback_data="users:search")],
             [InlineKeyboardButton(text="➕ Adicionar", callback_data="users:add")],
             [back_button()],
         ]
@@ -43,7 +43,7 @@ async def _replace_menu(
     text:  str,
     kbd:   InlineKeyboardMarkup,
 ) -> None:
-    """Edita (ou envia) a mensagem-menu e reactiva o timeout."""
+    """Edita (ou envia) a mensagem-menu e reativa o timeout."""
     try:
         await cb.message.edit_text(text, reply_markup=kbd, parse_mode="Markdown")
         msg = cb.message
@@ -55,8 +55,15 @@ async def _replace_menu(
     start_menu_timeout(cb.bot, msg, state)
 
 async def _show_main_menu(cb: CallbackQuery, state: FSMContext) -> None:
+    """Volta ao menu principal do administrador."""
     await state.set_state(AdminMenuStates.MAIN)
     await _replace_menu(cb, state, "💻 *Menu:*", _main_menu_kbd())
+
+async def _show_users_menu(cb: CallbackQuery, state: FSMContext) -> None:
+    """Volta ao menu “Utilizadores” (sub-menu do administrador)."""
+    # Define estado de Utilizadores e apresenta o menu correspondente
+    await state.set_state(AdminMenuStates.USERS)
+    await _replace_menu(cb, state, "👥 *Utilizadores* — seleccione:", _users_kbd())
 
 # ─────────────────────────── MAIN nav ───────────────────────────
 @router.callback_query(
@@ -69,8 +76,7 @@ async def admin_main_nav(cb: CallbackQuery, state: FSMContext):
         await state.set_state(AdminMenuStates.AGENDA)
         await _replace_menu(cb, state, "📅 *Agenda* — seleccione:", _agenda_kbd())
     elif cb.data == "admin:users":
-        await state.set_state(AdminMenuStates.USERS)
-        await _replace_menu(cb, state, "👥 *Utilizadores* — seleccione:", _users_kbd())
+        await _show_users_menu(cb, state)
     else:  # admin:messages
         await state.set_state(AdminMenuStates.MESSAGES)
         await _replace_menu(
@@ -91,9 +97,15 @@ async def agenda_placeholders(cb: CallbackQuery, state: FSMContext):
     except exceptions.TelegramBadRequest:
         pass
 
-@router.callback_query(StateFilter(AdminMenuStates.AGENDA), F.data == "back")
-async def agenda_back(cb: CallbackQuery, state: FSMContext):
+# ─────────── Voltar (Agenda, Utilizadores, Mensagens) ───────────
+@router.callback_query(
+    StateFilter((AdminMenuStates.AGENDA, AdminMenuStates.USERS, AdminMenuStates.MESSAGES)),
+    F.data == "back",
+)
+async def admin_submenu_back(cb: CallbackQuery, state: FSMContext):
+    """Trata do botão Voltar nos sub-menus principais do administrador."""
     await cb.answer()
+    # Regressar ao menu principal do administrador
     await _show_main_menu(cb, state)
 
 # ─────────────────────── Utilizadores ──────────────────────────
@@ -111,7 +123,7 @@ async def users_menu_options(cb: CallbackQuery, state: FSMContext):
             InlineKeyboardMarkup(inline_keyboard=[[back_button()]]),
         )
     else:  # users:add
-        await state.set_state(AdminMenuStates.USERS_ADD)
+        # Entrar no fluxo de “Adicionar utilizador” – escolher o tipo
         await state.set_state(AddUserStates.CHOOSING_ROLE)
         await _replace_menu(
             cb, state,
@@ -119,30 +131,17 @@ async def users_menu_options(cb: CallbackQuery, state: FSMContext):
             build_user_type_kbd(),
         )
 
-@router.callback_query(StateFilter(AdminMenuStates.USERS), F.data == "back")
-async def users_back(cb: CallbackQuery, state: FSMContext):
-    await cb.answer()
-    await _show_main_menu(cb, state)
-
 # ─────── Voltar a partir de QUALQUER sub-estado em Utilizadores ───────
 @router.callback_query(
     StateFilter((
         AdminMenuStates.USERS_SEARCH,
-        AdminMenuStates.USERS_ADD,
-        AddUserStates,                # todo o sub-grupo
+        AddUserStates,                # todo o sub-grupo de adicionar utilizador
     )),
     F.data == "back",
 )
 async def users_suboption_back(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    await state.set_state(AdminMenuStates.USERS)
-    await _replace_menu(cb, state, "👥 *Utilizadores* — seleccione:", _users_kbd())
-
-# ─────────────────────────── Mensagens ─────────────────────────
-@router.callback_query(StateFilter(AdminMenuStates.MESSAGES), F.data == "back")
-async def messages_back(cb: CallbackQuery, state: FSMContext):
-    await cb.answer()
-    await _show_main_menu(cb, state)
+    await _show_users_menu(cb, state)
 
 # ─────── Fluxo “Adicionar Utilizador” – passo 1 (placeholder) ───────
 @router.callback_query(StateFilter(AddUserStates.CHOOSING_ROLE), F.data.startswith("role:"))
@@ -156,5 +155,5 @@ async def adduser_choose_role(cb: CallbackQuery, state: FSMContext):
         parse_mode="Markdown",
     )
 
-    await state.set_state(AdminMenuStates.USERS)
-    await _replace_menu(cb, state, "👥 *Utilizadores* — seleccione:", _users_kbd())
+    # Regressar ao menu de Utilizadores (fim do fluxo Adicionar utilizador)
+    await _show_users_menu(cb, state)
