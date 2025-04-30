@@ -2,10 +2,11 @@
 """
 Administrator menu handlers (Aiogram 3.20).
 
-• Botões “Voltar” agora funcionam FIÁVELMENTE em **todos** os níveis.
-• Evita que o ActiveMenuMiddleware descarte callbacks logo após editar o menu
-  (actualiza o menu ID no FSM antes da edição).
-• Depois de escolher Paciente/Cuidador/… o menu fecha-se (keyboard removida).
+• Todos os botões **Voltar** mantêm-se operacionais.
+• Após a escolha de qualquer opção *placeholder* (Pesquisar utilizador, Agenda → Geral/Fisioterapeuta, Mensagens),
+  o menu é imediatamente fechado (keyboard removida) e o utilizador recebe um alerta popup.
+• Mantém-se compatível com o ActiveMenuMiddleware, actualizando sempre o menu activo no FSM
+  **antes** de editar mensagens.
 """
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ def _users_kbd() -> InlineKeyboardMarkup:
         ]
     )
 
-# ───────────────────────── utilitário UI ─────────────────────────
+# ───────────────────────── utilitários UI ─────────────────────────
 async def _replace_menu(
     cb:    CallbackQuery,
     state: FSMContext,
@@ -55,11 +56,9 @@ async def _replace_menu(
     """
     Edita (ou cria) a mensagem-menu e reinicia o timeout.
 
-    ⚠️ Actualizamos menu_msg_id/menu_chat_id **antes** de chamar edit_text
-    para evitar que o ActiveMenuMiddleware descarte callbacks em milissegundos
-    de latência entre o clique e a edição.
+    ⚠️ Regista o menu activo **antes** da edição, prevenindo que o
+    ActiveMenuMiddleware descarte callbacks subsequentes.
     """
-    # Regista a mensagem actual (antes da edição) como menu activo
     await state.update_data(menu_msg_id=cb.message.message_id,
                             menu_chat_id=cb.message.chat.id)
 
@@ -67,7 +66,6 @@ async def _replace_menu(
         await cb.message.edit_text(text, reply_markup=kbd, parse_mode="Markdown")
         msg = cb.message
     except exceptions.TelegramBadRequest:
-        # Se falhar (mensagem demasiado antiga), cria nova
         await cb.message.delete()
         msg = await cb.message.answer(text, reply_markup=kbd, parse_mode="Markdown")
         await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
@@ -75,14 +73,14 @@ async def _replace_menu(
     start_menu_timeout(cb.bot, msg, state)
 
 async def _close_menu(cb: CallbackQuery, state: FSMContext, confirmation: str) -> None:
-    """Remove o teclado inline e limpa registo do menu activo."""
+    """Remove o teclado inline, mostra confirmação e limpa registo no FSM."""
     try:
         await cb.message.edit_text(confirmation, parse_mode="Markdown", reply_markup=None)
     except exceptions.TelegramBadRequest:
         pass
     await state.update_data(menu_msg_id=None, menu_chat_id=None)
 
-# ─────────────────── wrappers de navegação ───────────────────
+# ─────────────────── wrappers de navegação ────────────────────
 async def _main(cb: CallbackQuery, state: FSMContext):
     await state.set_state(AdminMenuStates.MAIN)
     await _replace_menu(cb, state, "💻 *Menu:*", _main_menu_kbd())
@@ -103,7 +101,7 @@ async def _add_user(cb: CallbackQuery, state: FSMContext):
         build_user_type_kbd(),
     )
 
-# ──────────────────────── MAIN menu ──────────────────────────
+# ──────────────────────── MENU PRINCIPAL ────────────────────────
 @router.callback_query(AdminMenuStates.MAIN, F.data == "admin:agenda")
 async def open_agenda(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
@@ -114,10 +112,19 @@ async def open_users(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await _users(cb, state)
 
-# ───────────────────────── Agenda ────────────────────────────
+@router.callback_query(AdminMenuStates.MAIN, F.data == "admin:messages")
+async def open_messages(cb: CallbackQuery, state: FSMContext):
+    await cb.answer("🚧 Mensagens – em desenvolvimento", show_alert=True)
+    await _close_menu(cb, state, "💬 *Mensagens* – em desenvolvimento")
+    await state.set_state(AdminMenuStates.MAIN)
+
+# ─────────────────────────── Agenda ────────────────────────────
 @router.callback_query(AdminMenuStates.AGENDA, F.data.in_(["agenda:geral", "agenda:fisios"]))
 async def agenda_placeholder(cb: CallbackQuery, state: FSMContext):
-    await cb.answer("🚧 Em desenvolvimento", show_alert=True)
+    destino = "Geral" if cb.data.endswith("geral") else "Fisioterapeuta"
+    await cb.answer(f"🚧 Agenda {destino} – em desenvolvimento", show_alert=True)
+    await _close_menu(cb, state, f"📅 *Agenda {destino}* – em desenvolvimento")
+    await state.set_state(AdminMenuStates.MAIN)
 
 @router.callback_query(AdminMenuStates.AGENDA, F.data == "back")
 async def agenda_back(cb: CallbackQuery, state: FSMContext):
@@ -127,7 +134,9 @@ async def agenda_back(cb: CallbackQuery, state: FSMContext):
 # ─────────────────────── Utilizadores ────────────────────────
 @router.callback_query(AdminMenuStates.USERS, F.data == "users:search")
 async def users_search(cb: CallbackQuery, state: FSMContext):
-    await cb.answer("🚧 Em desenvolvimento", show_alert=True)
+    await cb.answer("🚧 Pesquisar utilizador – em desenvolvimento", show_alert=True)
+    await _close_menu(cb, state, "🔍 *Pesquisar utilizador* – em desenvolvimento")
+    await state.set_state(AdminMenuStates.USERS)
 
 @router.callback_query(AdminMenuStates.USERS, F.data == "users:add")
 async def users_add(cb: CallbackQuery, state: FSMContext):
@@ -143,15 +152,14 @@ async def users_back(cb: CallbackQuery, state: FSMContext):
 @router.callback_query(AddUserStates.CHOOSING_ROLE, F.data.startswith("role:"))
 async def adduser_choose_role(cb: CallbackQuery, state: FSMContext):
     role = cb.data.split(":", 1)[1]
-    await cb.answer(f"Escolhido: {role}", show_alert=False)
+    await cb.answer(f"✅ {role.title()} seleccionado!", show_alert=False)
 
-    # Fecha o menu (remove teclado)
+    # Fecha o menu
     await _close_menu(
         cb, state,
         f"✅ *{role.title()}* seleccionado!\n"
         "🚧 Passos seguintes por implementar…",
     )
-    # Mantém navegação lógica em USERS para permitir novo /menu
     await state.set_state(AdminMenuStates.USERS)
 
 @router.callback_query(AddUserStates.CHOOSING_ROLE, F.data == "back")
