@@ -1,11 +1,11 @@
 # bot/main.py
 """
-Entry point for the Telegram bot application.
+Entry point for the Telegram bot application (webhook • aiohttp).
 
-- Initializes bot, middlewares, and routers
-- Sets up webhook server using aiohttp
-- Handles graceful shutdown
-- Adds custom HTTP endpoints (/healthz, /ping)
+• Inicializa Redis-FSM, liga pool PostgreSQL partilhado
+• Regista middlewares e routers
+• Exponde /healthz e /ping
+• Faz graceful-shutdown
 """
 
 import asyncio
@@ -14,7 +14,7 @@ import signal
 from contextlib import suppress
 
 from aiohttp import web
-from aiogram import Bot, Dispatcher, exceptions
+from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
@@ -24,72 +24,60 @@ from bot.config import (
 )
 from bot.middlewares.role_check import RoleCheckMiddleware
 from bot.middlewares.active_menu_middleware import ActiveMenuMiddleware
+from bot.database import connection                 # ← singleton do pool
 
-
+# ──────────────────────────────────────────────────────────────
 async def main() -> None:
-    """Main async entrypoint for the bot lifecycle."""
-
-    # ─────────── Logging ───────────
+    # logging
     logging.basicConfig(
         level=LOG_LEVEL,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     )
 
-    # ─────────── Bot & Storage ───────────
+    # bot + pool
     bot = Bot(token=BOT_TOKEN, parse_mode=None)
+    bot.pg_pool = await connection.init()           # ← pool anexada ao bot
 
-    redis_dsn = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+    # Redis-FSM
     storage = RedisStorage.from_url(
-        redis_dsn,
+        f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",
         key_builder=DefaultKeyBuilder(prefix=REDIS_PREFIX),
     )
-
     dp = Dispatcher(bot=bot, storage=storage)
 
-    # ─────────── Middlewares ───────────
+    # middlewares
     dp.message.outer_middleware(RoleCheckMiddleware())
     dp.callback_query.outer_middleware(RoleCheckMiddleware())
     dp.callback_query.outer_middleware(ActiveMenuMiddleware())
 
-    # ─────────── Routers ───────────
-    from bot.handlers import register_routers  # Late import to avoid circular imports
+    # routers
+    from bot.handlers import register_routers
     register_routers(dp)
 
-    # ─────────── Webhook Setup ───────────
+    # webhook
     await bot.set_webhook(WEBHOOK_URL, secret_token=SECRET_TOKEN)
     logging.info("Webhook registado em %s", WEBHOOK_URL)
 
     app = web.Application()
-
-    # Webhook handler for Telegram
-    SimpleRequestHandler(
-        dispatcher=dp,
-        bot=bot,
-        secret_token=SECRET_TOKEN,
-    ).register(app, path=WEBHOOK_PATH)
-
+    SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=SECRET_TOKEN)\
+        .register(app, path=WEBHOOK_PATH)
     setup_application(app, dp)
 
-    # ─────────── Custom HTTP Handlers (/healthz, /ping) ───────────
-    async def healthz(request):
-        return web.Response(text="OK", status=200)
-
-    async def ping(request):
-        return web.Response(text="Pong", status=200)
-
+    # /healthz  /ping
+    async def healthz(request): return web.Response(text="OK")
+    async def ping(request):    return web.Response(text="Pong")
     app.router.add_get("/healthz", healthz)
-    app.router.add_get("/ping", ping)
+    app.router.add_get("/ping",   ping)
 
-    # ─────────── Start aiohttp Server ───────────
+    # arrancar aiohttp
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, host="0.0.0.0", port=WEBAPP_PORT).start()
     logging.info("🚀 Webhook server ativo em 0.0.0.0:%s", WEBAPP_PORT)
 
-    # ─────────── Graceful Shutdown ───────────
+    # graceful-shutdown
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
-
     for sig in (signal.SIGINT, signal.SIGTERM):
         with suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop_event.set)
@@ -97,13 +85,14 @@ async def main() -> None:
     try:
         await stop_event.wait()
     finally:
-        logging.info("Iniciar shutdown...")
+        logging.info("Iniciar shutdown…")
         await bot.delete_webhook(drop_pending_updates=True)
         await runner.cleanup()
+        await connection.close()      # ← fecha pool
         await bot.session.close()
         await storage.close()
-        logging.info("Shutdown concluído com sucesso.")
+        logging.info("Shutdown concluído.")
 
-
+# ponto de arranque
 if __name__ == "__main__":
     asyncio.run(main())
