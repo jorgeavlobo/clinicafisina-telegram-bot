@@ -71,7 +71,7 @@ async def _replace_menu(
         msg = await cb.message.answer(text, reply_markup=kbd, parse_mode="Markdown")
         await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
 
-    start_menu_timeout(cb.bot, msg, state)
+    await start_menu_timeout(cb.bot, msg, state)
 
 
 async def _close_menu(cb: types.CallbackQuery, state: FSMContext, confirmation: str) -> None:
