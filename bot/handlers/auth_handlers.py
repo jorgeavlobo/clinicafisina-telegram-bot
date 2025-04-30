@@ -31,9 +31,6 @@ from bot.database.connection import get_pool
 from bot.database import queries as q
 from bot.menus import show_menu
 
-# opcional – caso não uses internacionalização, remove estas 2 linhas
-from bot.utils.i18n import _                      # devolve texto inalterado
-
 log = logging.getLogger(__name__)
 router = Router(name="auth")
 
