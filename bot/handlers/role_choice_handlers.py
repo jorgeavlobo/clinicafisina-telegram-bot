@@ -1,9 +1,9 @@
 # bot/handlers/role_choice_handlers.py
 """
-Selector de perfil quando o utilizador tem ≥2 roles.
+Selector de perfil quando o utilizador tem ≥ 2 roles.
 
-• Inline-keyboard com timeout de 60 s
-• Guarda «active_role» no FSM
+• Mostra um inline-keyboard com timeout de 60 s
+• Depois da escolha guarda «active_role» no FSM
 """
 
 from __future__ import annotations
@@ -22,29 +22,33 @@ from bot.states.admin_menu_states import AdminMenuStates
 
 router = Router(name="role_choice")
 
-_TIMEOUT = 60  # seg.
+_TIMEOUT = 60  # segundos
 
 _LABELS_PT = {
-    "patient": "Paciente",
-    "caregiver": "Cuidador",
+    "patient":         "Paciente",
+    "caregiver":       "Cuidador",
     "physiotherapist": "Fisioterapeuta",
-    "accountant": "Contabilista",
-    "administrator": "Administrador",
+    "accountant":      "Contabilista",
+    "administrator":   "Administrador",
 }
 
 
 def _label(role: str) -> str:
+    """Devolve rótulo PT ou capitaliza por defeito."""
     return _LABELS_PT.get(role.lower(), role.capitalize())
 
 
-# ───────────────────────── public API ─────────────────────────
+# ─────────────────── API pública ────────────────────
 async def ask_role(
     bot: types.Bot,
     chat_id: int,
     state: FSMContext,
     roles: Iterable[str],
 ) -> None:
-    """Mostra o selector de perfis e coloca o FSM em WAIT_ROLE_CHOICE."""
+    """
+    Envia o selector de perfis e coloca o estado
+    MenuStates.WAIT_ROLE_CHOICE.
+    """
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -71,12 +75,13 @@ async def ask_role(
         menu_chat_id=msg.chat.id,
     )
 
+    # timeout p/ remover teclado se não escolher
     asyncio.create_task(
         _expire_selector(bot, msg.chat.id, msg.message_id, state)
     )
 
 
-# ───────────────────────── timeout ─────────────────────────
+# ─────────────────── timeout ────────────────────
 async def _expire_selector(
     bot: types.Bot,
     chat_id: int,
@@ -84,12 +89,13 @@ async def _expire_selector(
     state: FSMContext,
 ) -> None:
     await asyncio.sleep(_TIMEOUT)
+
     if await state.get_state() != MenuStates.WAIT_ROLE_CHOICE.state:
         return
     if (await state.get_data()).get("role_selector_marker") != msg_id:
         return
 
-    await state.clear()
+    await state.clear()          # descarta selector
     with suppress(exceptions.TelegramBadRequest):
         await bot.edit_message_reply_markup(chat_id, msg_id, reply_markup=None)
 
@@ -102,7 +108,7 @@ async def _expire_selector(
         await warn.delete()
 
 
-# ─────────────────── callback “role:xxx” ───────────────────
+# ─────────────────── callback “role:…” ────────────────────
 @router.callback_query(
     StateFilter(MenuStates.WAIT_ROLE_CHOICE),
     lambda c: c.data and c.data.startswith("role:"),
@@ -110,20 +116,24 @@ async def _expire_selector(
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     role = cb.data.split(":", 1)[1].lower()
     data = await state.get_data()
+
     if role not in data.get("roles", []):
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
+    # remove a mensagem do selector
     with suppress(exceptions.TelegramBadRequest):
         await cb.message.delete()
 
+    # limpa estado temporário mas mantém roles
     await state.clear()
     await state.update_data(active_role=role, roles=data["roles"])
 
+    # alguns perfis precisam de estado base (admin)
     if role == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
     else:
         await state.set_state(MenuStates.MENU_ACTIVE)
 
-    await cb.answer(f"Perfil {_label(role)} seleccionado!")
+    await cb.answer(f"Perfil {_label(role)} selecionado!")
     await show_menu(cb.bot, cb.message.chat.id, state, [role])
