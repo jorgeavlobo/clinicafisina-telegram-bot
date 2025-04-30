@@ -51,7 +51,7 @@ async def _ask(msg: types.Message, prompt: str, state: FSMContext, *, kbd=True):
 async def _cancel_flow(msg: types.Message, state: FSMContext):
     await _purge(msg.bot, state, msg.chat.id)
     await msg.answer("❌ Processo cancelado.", reply_markup=types.ReplyKeyboardRemove())
-    await state.clear()
+    await clear_keep_role(state)
 
 async def _handle_back_cancel(msg: types.Message, state: FSMContext,
                               prev: Optional[AddUserFlow]) -> bool:
@@ -214,4 +214,4 @@ async def _finish(cb: types.CallbackQuery, state: FSMContext, text: str):
     await _purge(cb.bot, state, cb.message.chat.id)
     with suppress(exceptions.TelegramBadRequest):
         await cb.message.edit_text(text, parse_mode="Markdown")
-    await state.clear()
+    await clear_keep_role(state)
