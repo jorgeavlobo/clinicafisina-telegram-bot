@@ -3,6 +3,7 @@
 Selector de perfil quando o utilizador tem vários roles.
 
 • Inline-keyboard com timeout de 60 s
+• Grava «active_role» no FSM antes de mostrar o menu principal
 """
 
 from __future__ import annotations
@@ -33,7 +34,6 @@ _LABELS_PT = {
 
 
 def role_label(role: str) -> str:
-    """Traduz o identificador interno do role para PT‐BR amigável."""
     return _LABELS_PT.get(role, role.capitalize())
 
 
@@ -104,15 +104,16 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     """Tratamento da escolha de perfil."""
     role = cb.data.split(":", 1)[1]   # ex.: "administrator"
 
-    # 1) limpar qualquer estado intermédio
-    await state.clear()
-
-    # 2) abrir o menu respectivo (show_menu grava active_role)
-    await show_menu(cb.bot, cb.message.chat.id, state, [role])
-
-    # 3) remover o teclado do selector
+    # 1) remover imediatamente o teclado do selector
     with suppress(exceptions.TelegramBadRequest):
         await cb.message.edit_reply_markup(reply_markup=None)
+
+    # 2) limpar qualquer estado intermédio e gravar o papel activo
+    await state.clear()
+    await state.update_data(active_role=role)
+
+    # 3) abrir o menu respectivo
+    await show_menu(cb.bot, cb.message.chat.id, state, [role])
 
     # 4) feedback ao utilizador
     await cb.answer(f"Perfil {role_label(role)} seleccionado!")
