@@ -1,23 +1,36 @@
 # bot/middlewares/role_check.py
 """
-Garante que o utilizador tem um perfil ativo antes de continuar.
+Middleware único que:
+1) Obtém da BD o utilizador (se existir) e injeta em `data`:
+       data["user"]  -> dict com o registo completo
+       data["roles"] -> list[str] (lowercase)
+2) Garante que há *role* activo no FSM antes de deixar o
+   processamento prosseguir (excepto durante o selector).
 
-Se o FSM estiver em MenuStates.WAIT_ROLE_CHOICE (selector de perfil),
-o middleware deixa passar – é exatamente esse handler que vai definir
-o perfil ativo. Também ignora CallbackQueries cujo callback_data
-comece por "role:" (botões do selector).
+⚠️  Tem de ser registado **antes** de qualquer Middleware que
+    dependa de `data["roles"]` (ex.: RoleFilter).
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict
+import time
+from typing import Any, Dict, Callable
 
-from aiogram import BaseMiddleware, types
+from aiogram import BaseMiddleware, types, exceptions
 from aiogram.fsm.context import FSMContext
 
+from bot.database.connection import get_pool
+from bot.database import queries as q
 from bot.states.menu_states import MenuStates
 
 log = logging.getLogger(__name__)
+
+# ───────────────── Cache muito simples (memória) ─────────────────
+#   evita ir à BD a cada update; expira ao fim de 60 s
+_CACHE: dict[int, tuple[dict[str, Any], list[str], float]] = {}
+_TTL = 60.0  # segundos
+
 
 class RoleCheckMiddleware(BaseMiddleware):
     async def __call__(
@@ -27,39 +40,61 @@ class RoleCheckMiddleware(BaseMiddleware):
         data: Dict[str, Any],
     ) -> Any:
 
+        tg_user = data.get("event_from_user")
+        if tg_user:
+            user, roles = await self._get_user_and_roles(tg_user.id)
+            if user:
+                data["user"] = user
+                data["roles"] = roles
+
+        # ───────────────── 1) permissões especiais ─────────────────
         state: FSMContext = data["state"]
 
-        # ------------------------------------------------------------------
-        # • Permitir sempre o comando /start (início do fluxo de login).
-        # • Se estamos no seletor de perfis, deixa passar.
-        # • Se o callback é "role:xyz" (botão de seleção de perfil), deixa passar.
-        # ------------------------------------------------------------------
-        if isinstance(event, types.Message) and getattr(event, "text", "").startswith("/start"):
-            return await handler(event, data)
+        # a) estamos no selector de perfis → passa sempre
         if await state.get_state() == MenuStates.WAIT_ROLE_CHOICE.state:
             return await handler(event, data)
 
+        # b) clique nos botões role:xxx do selector → passa
         if isinstance(event, types.CallbackQuery) and \
            event.data and event.data.startswith("role:"):
             return await handler(event, data)
 
-        # ------------------------------------------------------------------
-        # Fora isso, exige perfil ativo no FSM.
-        # ------------------------------------------------------------------
-        user_data = await state.get_data()
-        if not user_data.get("active_role"):
-            if isinstance(event, types.CallbackQuery):
-                await event.answer(
-                    "Ainda não tem permissões atribuídas. "
-                    "Contacte a receção/administração.",
-                    show_alert=True,
-                )
-            elif isinstance(event, types.Message):
-                await event.reply(
-                    "Ainda não tem permissões atribuídas. "
-                    "Contacte a receção/administração.",
-                )
-            log.info("Bloqueado por falta de role ativo – user %s", event.from_user.id)
+        # ───────────────── 2) exige active_role ────────────────────
+        if not (await state.get_data()).get("active_role"):
+            await self._deny(event)
+            log.info("Blocado por falta de role activo – user %s", tg_user.id if tg_user else "?")
             return
 
+        # tudo OK → continua
         return await handler(event, data)
+
+    # ───────────────── helpers ─────────────────
+    async def _get_user_and_roles(self, tg_id: int) -> tuple[dict[str, Any] | None, list[str]]:
+        now = time.time()
+        cached = _CACHE.get(tg_id)
+        if cached and now - cached[2] < _TTL:
+            return cached[0], cached[1]
+
+        pool = await get_pool()
+        user = await q.get_user_by_telegram_id(pool, tg_id)
+        roles: list[str] = []
+        if user:
+            roles = [r.lower() for r in await q.get_user_roles(pool, user["user_id"])]
+
+        _CACHE[tg_id] = (user, roles, now)
+        return user, roles
+
+    @staticmethod
+    async def _deny(event: types.TelegramObject) -> None:
+        text = ("Ainda não tem permissões atribuídas.\n"
+                "Contacte a receção/administrador.")
+        if isinstance(event, types.CallbackQuery):
+            try:
+                await event.answer(text, show_alert=True)
+            except exceptions.TelegramBadRequest:
+                pass
+        elif isinstance(event, types.Message):
+            try:
+                await event.reply(text)
+            except exceptions.TelegramBadRequest:
+                pass
