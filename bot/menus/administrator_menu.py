@@ -9,8 +9,8 @@ def build_menu() -> InlineKeyboardMarkup:
     """Teclado inline do menu *principal* de administrador."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton("🗂 Utilizadores", callback_data="admin:users")],
-            [InlineKeyboardButton("📅 Agenda",        callback_data="admin:agenda")],
+            [InlineKeyboardButton(text="🗂 Utilizadores",  callback_data="admin:users")],
+            [InlineKeyboardButton(text="📅 Agenda",        callback_data="admin:agenda")],
         ]
     )
 
@@ -19,11 +19,11 @@ def build_menu() -> InlineKeyboardMarkup:
 def build_user_type_kbd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton("Paciente",        callback_data="role:patient")],
-            [InlineKeyboardButton("Cuidador",        callback_data="role:caregiver")],
-            [InlineKeyboardButton("Fisioterapeuta",  callback_data="role:physiotherapist")],
-            [InlineKeyboardButton("Contabilista",    callback_data="role:accountant")],
-            [InlineKeyboardButton("Administrador",   callback_data="role:administrator")],
+            [InlineKeyboardButton(text="Paciente",        callback_data="role:patient")],
+            [InlineKeyboardButton(text="Cuidador",        callback_data="role:caregiver")],
+            [InlineKeyboardButton(text="Fisioterapeuta",  callback_data="role:physiotherapist")],
+            [InlineKeyboardButton(text="Contabilista",    callback_data="role:accountant")],
+            [InlineKeyboardButton(text="Administrador",   callback_data="role:administrator")],
             [back_button()],
         ]
     )
