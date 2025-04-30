@@ -2,11 +2,18 @@
 """
 Handlers do menu de Administrador.
 
-• Corrige todos os fluxos de “Voltar” (back) que não regressavam ao menu correcto.
-• Mantém o utilizador no submenu “Adicionar utilizador” depois de escolher o
-  tipo (Paciente, Cuidador, …), em vez de saltar para “Utilizadores – seleccione”.
-• Garante que o ID da mensagem-menu activa é sempre actualizado no FSM, evitando
-  que o ActiveMenuMiddleware rejeite callbacks legítimas.
+Principais correcções nesta versão
+──────────────────────────────────
+1. **Botões “Voltar”** – agora funcionam em todos os sub-menus:
+   • Agenda, Utilizadores, Procurar, Adicionar e dentro de “Adicionar utilizador”.
+2. **Fluxo “Adicionar utilizador”** – ao escolher Paciente/Cuidador/…:
+   • O menu fecha-se (inline-keyboard removida) em vez de regressar
+     a “Utilizadores – seleccione”.
+3. **Gestão de menu activo** – quando o menu é destruído ou fechado,
+   as chaves `menu_msg_id` e `menu_chat_id` são limpas no contexto FSM,
+   evitando bloqueios no `ActiveMenuMiddleware`.
+4. Código reorganizado para clareza e modularidade, mantendo compatibilidade
+   com Aiogram 3.20.
 """
 
 from __future__ import annotations
@@ -29,7 +36,6 @@ router.callback_query.filter(RoleFilter("administrator"))
 
 # ────────────────────────── builders de sub-menus ─────────────────────────
 def _agenda_kbd() -> InlineKeyboardMarkup:
-    """Teclado inline do submenu Agenda."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📆 Geral",         callback_data="agenda:geral")],
@@ -39,7 +45,6 @@ def _agenda_kbd() -> InlineKeyboardMarkup:
     )
 
 def _users_kbd() -> InlineKeyboardMarkup:
-    """Teclado inline do submenu Utilizadores."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔍 Procurar",  callback_data="users:search")],
@@ -59,35 +64,32 @@ async def _replace_menu(
     Edita (ou cria) a mensagem-menu e reinicia o timeout.
 
     Sempre que o menu é actualizado, o par (menu_chat_id, menu_msg_id) é
-    guardado no FSM para que o `ActiveMenuMiddleware` valide futuras callbacks.
+    guardado no FSM para validação futura pelo ActiveMenuMiddleware.
     """
     try:
-        # Tenta editar a mensagem existente
         await cb.message.edit_text(text, reply_markup=kbd, parse_mode="Markdown")
         msg = cb.message
     except exceptions.TelegramBadRequest:
-        # Caso falhe (p.ex. mensagem demasiado antiga), apaga-a e cria nova
+        # Se a mensagem já expirou para edição, cria nova
         await cb.message.delete()
         msg = await cb.message.answer(text, reply_markup=kbd, parse_mode="Markdown")
 
-    # ✱ GARANTE que o middleware reconhece este menu como o activo
     await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
-
-    # (Re)inicia o timeout de inactividade
     start_menu_timeout(cb.bot, msg, state)
 
+async def _clear_active_menu(state: FSMContext) -> None:
+    """Remove do FSM a referência ao menu activo (para o middleware)."""
+    await state.update_data(menu_msg_id=None, menu_chat_id=None)
+
 async def _show_main_menu(cb: CallbackQuery, state: FSMContext) -> None:
-    """Mostra o menu principal de Administrador."""
     await state.set_state(AdminMenuStates.MAIN)
     await _replace_menu(cb, state, "💻 *Menu:*", _main_menu_kbd())
 
 async def _show_users_menu(cb: CallbackQuery, state: FSMContext) -> None:
-    """Mostra o submenu ‘Utilizadores’."""
     await state.set_state(AdminMenuStates.USERS)
     await _replace_menu(cb, state, "👥 *Utilizadores* — seleccione:", _users_kbd())
 
 async def _show_adduser_menu(cb: CallbackQuery, state: FSMContext) -> None:
-    """Mostra o fluxo ‘Adicionar utilizador — escolha o tipo’."""
     await state.set_state(AddUserStates.CHOOSING_ROLE)
     await _replace_menu(
         cb, state,
@@ -95,13 +97,12 @@ async def _show_adduser_menu(cb: CallbackQuery, state: FSMContext) -> None:
         build_user_type_kbd(),
     )
 
-# ─────────────────────── Navegação principal ───────────────────────
+# ─────────────────────────── entrada principal ───────────────────────────
 @router.callback_query(
     StateFilter(AdminMenuStates.MAIN),
     F.data.in_(["admin:agenda", "admin:users", "admin:messages"]),
 )
 async def admin_main_nav(cb: CallbackQuery, state: FSMContext):
-    """Entrada nos três sub-menus principais do Administrador."""
     await cb.answer()
     if cb.data == "admin:agenda":
         await state.set_state(AdminMenuStates.AGENDA)
@@ -122,20 +123,19 @@ async def admin_main_nav(cb: CallbackQuery, state: FSMContext):
     F.data.in_(["agenda:geral", "agenda:fisios"]),
 )
 async def agenda_placeholders(cb: CallbackQuery, state: FSMContext):
-    """Placeholders para opções de Agenda ainda não implementadas."""
     await cb.answer("🚧 Placeholder – em desenvolvimento", show_alert=True)
     try:
         await cb.message.delete()
     except exceptions.TelegramBadRequest:
         pass
+    await _clear_active_menu(state)
 
-# ────────────── Botão VOLTAR nos sub-menus principais ──────────────
+# ─────────────── botão VOLTAR (Agenda / Utilizadores / Mensagens) ───────────────
 @router.callback_query(
     StateFilter((AdminMenuStates.AGENDA, AdminMenuStates.USERS, AdminMenuStates.MESSAGES)),
     F.data == "back",
 )
 async def admin_submenu_back(cb: CallbackQuery, state: FSMContext):
-    """Regressa do submenu actual para o menu principal do Administrador."""
     await cb.answer()
     await _show_main_menu(cb, state)
 
@@ -145,7 +145,6 @@ async def admin_submenu_back(cb: CallbackQuery, state: FSMContext):
     F.data.in_(["users:search", "users:add"]),
 )
 async def users_menu_options(cb: CallbackQuery, state: FSMContext):
-    """Trata das duas opções do submenu Utilizadores: Procurar / Adicionar."""
     await cb.answer()
     if cb.data == "users:search":
         await state.set_state(AdminMenuStates.USERS_SEARCH)
@@ -157,16 +156,15 @@ async def users_menu_options(cb: CallbackQuery, state: FSMContext):
     else:  # users:add
         await _show_adduser_menu(cb, state)
 
-# ─────────────── Botão VOLTAR em ‘Procurar’ ou ‘Adicionar’ ───────────────
+# ─────────────── botão VOLTAR em ‘Procurar’ ou ‘Adicionar’ ───────────────
 @router.callback_query(
     StateFilter((
         AdminMenuStates.USERS_SEARCH,
-        AddUserStates,  # qualquer estado dentro do fluxo “Adicionar utilizador”
+        AddUserStates,  # qualquer estado dentro de “Adicionar utilizador”
     )),
     F.data == "back",
 )
 async def users_suboption_back(cb: CallbackQuery, state: FSMContext):
-    """Regressa de ‘Procurar’ ou ‘Adicionar’ ao submenu Utilizadores."""
     await cb.answer()
     await _show_users_menu(cb, state)
 
@@ -176,17 +174,19 @@ async def adduser_choose_role(cb: CallbackQuery, state: FSMContext):
     """
     Placeholder para criação de utilizador.
 
-    Após escolher o tipo (Paciente, Cuidador, …) o utilizador mantém-se no
-    submenu ‘Adicionar utilizador’, permitindo outra escolha ou sair com Voltar.
+    Depois de escolher o tipo, o menu é fechado (keyboard removida).
     """
     role = cb.data.split(":", 1)[1]
     await cb.answer(f"✅ {role.title()} seleccionado!", show_alert=False)
 
-    await _replace_menu(
-        cb, state,
+    # Fecha o menu: remove o teclado inline
+    await cb.message.edit_text(
         f"✅ *{role.title()}* seleccionado!\n"
-        "🚧 Passos seguintes por implementar…\n\n"
-        "*Escolha outro tipo ou volte:*",
-        build_user_type_kbd(),
+        "🚧 Passos seguintes por implementar…",
+        parse_mode="Markdown",
+        reply_markup=None,
     )
-    # Mantém-se em AddUserStates.CHOOSING_ROLE
+    await _clear_active_menu(state)
+
+    # Mantém o utilizador em AdminMenuStates.USERS para futuras acções
+    await state.set_state(AdminMenuStates.USERS)
