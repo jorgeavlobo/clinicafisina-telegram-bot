@@ -1,15 +1,20 @@
 # bot/states/admin_menu_states.py
-from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.state import State, StatesGroup
+
 
 class AdminMenuStates(StatesGroup):
+    """Estados de navegação do menu de administrador."""
+    MAIN          = State()   # Menu principal "Administrador"
+    AGENDA        = State()   # Sub-menu Agenda
+    USERS         = State()   # Sub-menu Utilizadores
+    USERS_SEARCH  = State()   # Fluxo Procurar (placeholder)
+    USERS_ADD     = State()   # Fluxo Adicionar – estado "wrapper"
+
+
+class AddUserStates(StatesGroup):
     """
-    Estados internos do menu de Administrador.
-    MAIN  → teclado “Agenda / Utilizadores”
-    AGENDA e USERS → sub-menus de 1.º nível
-    USERS_SEARCH / USERS_ADD → ramificações próprias (em desenvolvimento)
+    Sub-máquina de estados (filha de USERS_ADD) para o fluxo “Adicionar Utilizador”.
+    Nesta fase só precisamos escolher o tipo de utilizador; outros passos virão depois.
     """
-    MAIN         = State()   # menu principal
-    AGENDA       = State()   # submenu Agenda
-    USERS        = State()   # submenu Utilizadores
-    USERS_SEARCH = State()   # submenu Procurar Utilizador (placeholder)
-    USERS_ADD    = State()   # submenu Adicionar Utilizador (placeholder)
+    CHOOSING_ROLE = State()
+    # (fases seguintes virão aqui: FIRST_NAME, LAST_NAME, …)
