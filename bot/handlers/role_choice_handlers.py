@@ -129,11 +129,11 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await state.update_data(active_role=role, roles=data["roles"])
 
-    # alguns perfis precisam de estado base (admin)
+    # estado base (só é necessário para administrador)
     if role == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
     else:
-        await state.set_state(MenuStates.MENU_ACTIVE)
+        await state.set_state(None)          # ← ALTERADO
 
     await cb.answer(f"Perfil {_label(role)} selecionado!")
     await show_menu(cb.bot, cb.message.chat.id, state, [role])
