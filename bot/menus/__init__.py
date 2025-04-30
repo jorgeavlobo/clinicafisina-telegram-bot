@@ -49,7 +49,6 @@ async def _purge_old_menu(bot: Bot, state: FSMContext) -> None:
         with suppress(exceptions.TelegramBadRequest):
             await bot.delete_message(chat_id, msg_id)
 
-
 # ───────────────────────── API pública ─────────────────────────
 async def show_menu(
     bot: Bot,
@@ -74,7 +73,6 @@ async def show_menu(
     active = requested or data.get("active_role")
     if active is None:
         if len(roles) > 1:
-            # precisa de escolher → delega no selector (import local p/ evitar ciclo)
             from bot.handlers.role_choice_handlers import ask_role
             await _purge_old_menu(bot, state)
             await ask_role(bot, chat_id, state, roles)
@@ -109,13 +107,13 @@ async def show_menu(
     )
     await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=chat_id)
 
-    # 5) estado FSM base (apenas para administrador)
+    # 5) estado FSM base (administrator mantém MAIN)
     if active == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
 
-    # 6) (re)inicia timeout automático
-    start_menu_timeout(bot, msg, state)
+    # 6) (re)inicia cronómetro de inactividade
+    await start_menu_timeout(bot, msg, state)
 
-    # 7) menus “normais” ficam com FSM limpa depois de arrancar o cronómetro
+    # 7) restantes perfis → FSM “limpa”
     if active != "administrator":
         await state.set_state(None)
