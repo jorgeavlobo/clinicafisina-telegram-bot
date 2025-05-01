@@ -18,6 +18,7 @@ from aiogram import Bot, exceptions
 from aiogram.types import ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
 
+from bot.states.menu_states       import MenuStates          #  ←  NOVO (faltava)
 from bot.states.admin_menu_states import AdminMenuStates
 from bot.utils.fsm_helpers        import clear_keep_role
 from bot.menus.common             import start_menu_timeout
@@ -39,6 +40,7 @@ _ROLE_MENU = {
     "administrator":   _admin,
 }
 
+
 # ───────────────────────── helpers ─────────────────────────
 async def _purge_old_menu(bot: Bot, state: FSMContext) -> None:
     """Apaga do chat o último menu registado na FSM (se existir)."""
@@ -48,6 +50,7 @@ async def _purge_old_menu(bot: Bot, state: FSMContext) -> None:
     if msg_id and chat_id:
         with suppress(exceptions.TelegramBadRequest):
             await bot.delete_message(chat_id, msg_id)
+
 
 # ───────────────────────── API pública ─────────────────────────
 async def show_menu(
@@ -68,11 +71,12 @@ async def show_menu(
         await clear_keep_role(state)
         return
 
-    # 1) determina o papel activo
+    # 1) determina o perfil activo
     data   = await state.get_data()
     active = requested or data.get("active_role")
     if active is None:
         if len(roles) > 1:
+            # precisa de escolher → delega no selector
             from bot.handlers.role_choice_handlers import ask_role
             await _purge_old_menu(bot, state)
             await ask_role(bot, chat_id, state, roles)
@@ -107,13 +111,11 @@ async def show_menu(
     )
     await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=chat_id)
 
-    # 5) estado FSM base (administrator mantém MAIN)
+    # 5) estado FSM base
     if active == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
+    else:
+        await state.set_state(None)   # FSM “limpa”
 
-    # 6) (re)inicia cronómetro de inactividade
-    await start_menu_timeout(bot, msg, state)
-
-    # 7) restantes perfis → FSM “limpa”
-    if active != "administrator":
-        await state.set_state(None)
+    # 6) (re)inicia timeout automático
+    start_menu_timeout(bot, msg, state)
