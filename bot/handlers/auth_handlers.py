@@ -31,6 +31,7 @@ router  = Router(name="auth")
 @router.message(CommandStart())
 async def cmd_start(msg: types.Message, state: FSMContext) -> None:
     """Comando /start: onboarding ou abertura do menu."""
+    log.warning("### /start recebido: %s", repr(msg.text))
 
     # 0) tenta remover a própria mensagem “/start”
     with suppress(exceptions.TelegramBadRequest):
