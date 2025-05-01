@@ -9,6 +9,8 @@ Administrator menu handlers (Aiogram 3.20).
 
 from __future__ import annotations
 
+from contextlib import suppress
+
 from aiogram import Router, F, exceptions, types
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
