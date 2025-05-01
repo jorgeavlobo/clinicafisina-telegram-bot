@@ -1,20 +1,17 @@
 # bot/utils/fsm_helpers.py
-"""
-Helpers para lidar com FSM sem perder o `active_role`
-que o RoleCheckMiddleware precisa para autorizar o utilizador.
-"""
-
 from aiogram.fsm.context import FSMContext
 
+__all__ = ["clear_keep_role"]
 
 async def clear_keep_role(state: FSMContext) -> None:
     """
-    Limpa TODO o estado mas, se existir, volta a gravar «active_role».
-    Usa-a sempre em vez de `state.clear()` depois de o perfil
-    já estar escolhido.
+    Limpa toda a FSM mas mantém «active_role».
+    Remove também chaves temporárias (_menu_timeout_task, menu_msg_id…).
     """
     data = await state.get_data()
-    active = data.get("active_role")
+    role = data.get("active_role")          # pode ser None
     await state.clear()
-    if active:
-        await state.update_data(active_role=active)
+
+    # repõe só o que interessa
+    if role:
+        await state.update_data(active_role=role)
