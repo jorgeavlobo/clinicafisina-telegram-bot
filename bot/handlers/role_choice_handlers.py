@@ -2,8 +2,8 @@
 """
 Selector de perfil quando o utilizador tem ≥ 2 papéis.
 
-• Mostra inline-keyboard com timeout de 60 s
-• Após a escolha guarda «active_role» no FSM
+• Mostra um inline-keyboard com timeout de 60 s
+• Após a escolha grava «active_role» no FSM
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from bot.states.menu_states        import MenuStates
 from bot.states.admin_menu_states  import AdminMenuStates
 
 router   = Router(name="role_choice")
-_TIMEOUT = 60  # s
+_TIMEOUT = 60  # seg.
 
 _LABELS_PT = {
     "patient":         "Paciente",
@@ -33,6 +33,7 @@ _LABELS_PT = {
 
 
 def _label(role: str) -> str:
+    """Rótulo PT; por defeito capitaliza."""
     return _LABELS_PT.get(role.lower(), role.capitalize())
 
 
@@ -61,12 +62,13 @@ async def ask_role(
 
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
-        roles=[r.lower() for r in roles],
+        roles=[r.lower() for r in roles],       # ← fica guardado
         role_selector_marker=msg.message_id,
         menu_msg_id=msg.message_id,
         menu_chat_id=msg.chat.id,
     )
 
+    # timeout para invalidar o selector se o user não escolher nada
     asyncio.create_task(
         _expire_selector(bot, msg.chat.id, msg.message_id, state)
     )
@@ -86,7 +88,7 @@ async def _expire_selector(
     if (await state.get_data()).get("role_selector_marker") != msg_id:
         return
 
-    await state.clear()
+    await state.clear()   # descarta o selector
     with suppress(exceptions.TelegramBadRequest):
         await bot.edit_message_reply_markup(
             chat_id=chat_id,
@@ -109,19 +111,23 @@ async def _expire_selector(
     lambda c: c.data and c.data.startswith("role:"),
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
-    role  = cb.data.split(":", 1)[1].lower()
-    stored = await state.get_data()
+    role   = cb.data.split(":", 1)[1].lower()
+    data   = await state.get_data()
+    roles  = data.get("roles", [])              # ← obtido do FSM
 
-    if role not in stored.get("roles", []):
+    if role not in roles:                       # ← usa a lista lida
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
+    # remove a mensagem do selector
     with suppress(exceptions.TelegramBadRequest):
         await cb.message.delete()
 
+    # limpa estado temporário mas mantém perfis
     await state.clear()
-    await state.update_data(active_role=role, roles=stored["roles"])
+    await state.update_data(active_role=role, roles=roles)
 
+    # estado base (só necessário para admin)
     if role == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
     else:
