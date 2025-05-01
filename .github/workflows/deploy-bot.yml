@@ -3,7 +3,7 @@ name: Build and Deploy Clinica Fisina Telegram Bot
 on:
   push:
     branches:
-      - jorgeavlobo-patch-59
+      - main
 
 jobs:
   build_and_deploy:
