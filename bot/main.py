@@ -19,7 +19,7 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from aiogram.middleware.base import BaseMiddleware
+from aiogram import BaseMiddleware
 
 from bot.config import (
     BOT_TOKEN, WEBHOOK_URL, WEBHOOK_PATH, SECRET_TOKEN, WEBAPP_PORT, LOG_LEVEL,
