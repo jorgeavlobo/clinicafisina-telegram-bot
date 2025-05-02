@@ -2,10 +2,9 @@
 """
 Selector de perfil quando o utilizador tem ≥ 2 papéis.
 
-• Mostra inline-keyboard com timeout (comum a todos os menus)  
-• Depois da escolha grava «active_role» no FSM  
-• Limpeza automática e bloqueio de teclados antigos reutilizam helpers
-  de bot/menus/common.py
+• Mostra inline-keyboard com timeout (gestão comum em bot/menus/common.py)
+• Após a escolha grava «active_role» no FSM
+• Fecha/limpa o menu de forma robusta assim que o utilizador escolhe
 """
 
 from __future__ import annotations
@@ -18,13 +17,9 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
 from bot.menus                     import show_menu
-from bot.menus.common              import (
-    start_menu_timeout,
-    _hide_menu_after,                      # ← helper privado para fallback
-)
-from bot.config                     import MESSAGE_TIMEOUT
-from bot.states.menu_states         import MenuStates
-from bot.states.admin_menu_states   import AdminMenuStates
+from bot.menus.common              import start_menu_timeout
+from bot.states.menu_states        import MenuStates
+from bot.states.admin_menu_states  import AdminMenuStates
 
 router = Router(name="role_choice")
 
@@ -38,7 +33,7 @@ _LABELS_PT = {
 
 
 def _label(role: str) -> str:
-    """Rótulo em PT (capitaliza se não existir tradução)."""
+    """Rótulo em PT (capitaliza por defeito)."""
     return _LABELS_PT.get(role.lower(), role.capitalize())
 
 
@@ -54,12 +49,10 @@ async def ask_role(
     O tempo limite é gerido por start_menu_timeout() (common.py).
     """
     kbd = types.InlineKeyboardMarkup(
-        inline_keyboard=[[
-            types.InlineKeyboardButton(
-                text=_label(r),
-                callback_data=f"role:{r.lower()}",
-            )
-        ] for r in roles]
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text=_label(r), callback_data=f"role:{r.lower()}")]
+            for r in roles
+        ]
     )
 
     msg = await bot.send_message(
@@ -72,13 +65,11 @@ async def ask_role(
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
         roles=[r.lower() for r in roles],
-        role_selector_marker=msg.message_id,   # usado p/ validações
         menu_msg_id=msg.message_id,
         menu_chat_id=msg.chat.id,
     )
 
-    # agenda a limpeza automática (usa MENU_TIMEOUT/MESSAGE_TIMEOUT)
-    start_menu_timeout(bot, msg, state)
+    start_menu_timeout(bot, msg, state)   # timeout/limpeza automática
 
 
 # ─────────────────── callback “role:…” ───────────────────
@@ -95,27 +86,19 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
-    # ─── remover de forma robusta o selector ───
-    selector_id: int | None = data.get("role_selector_marker")
-    if selector_id:
-        # 1) tentar apagar
+    # ─── fecha o selector de forma robusta ───
+    # 1) tenta apagar a própria mensagem
+    deleted = False
+    try:
+        await cb.message.delete()
+        deleted = True
+    except exceptions.TelegramBadRequest:
         deleted = False
-        try:
-            await cb.bot.delete_message(cb.message.chat.id, selector_id)
-            deleted = True
-        except exceptions.TelegramBadRequest:
-            deleted = False
 
-        # 2) se não conseguiu, usa o mesmo fallback de common.py
-        if not deleted:
-            await _hide_menu_after(
-                bot             = cb.bot,
-                chat_id         = cb.message.chat.id,
-                msg_id          = selector_id,
-                state           = state,
-                menu_timeout    = 0,              # executa imediatamente
-                message_timeout = MESSAGE_TIMEOUT,
-            )
+    # 2) se não conseguir, ao menos remove o teclado
+    if not deleted:
+        with suppress(exceptions.TelegramBadRequest):
+            await cb.message.edit_reply_markup(reply_markup=None)
 
     # ─── prossegue com a troca de perfil ───
     await state.clear()
