@@ -3,7 +3,7 @@
 Botões e utilitários de UI partilhados.
 
 • back_button() / cancel_back_kbd()
-• start_menu_timeout() – oculta o menu depois de X s
+• start_menu_timeout() – apaga o menu depois de X s
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ from bot.utils.fsm_helpers import clear_keep_role
 
 __all__ = ["back_button", "cancel_back_kbd", "start_menu_timeout"]
 
-
 # ───────────────────────── botões / teclados ─────────────────────────
 def back_button() -> InlineKeyboardButton:
     return InlineKeyboardButton(text="⬅️ Voltar", callback_data="back")
@@ -40,7 +39,6 @@ def cancel_back_kbd() -> ReplyKeyboardMarkup:
         one_time_keyboard=False,
     )
 
-
 # ───────────────────────── timeout do menu ─────────────────────────
 async def _hide_menu_after(
     bot: Bot,
@@ -50,40 +48,53 @@ async def _hide_menu_after(
     menu_timeout: int,
     message_timeout: int,
 ) -> None:
-    """Remove o inline-keyboard após `menu_timeout` segundos e
-    limpa os campos do menu no FSM (mantém *active_role*)."""
+    """
+    Após `menu_timeout` s tenta apagar COMPLETAMENTE a mensagem-menu.
+    Se não puder, remove pelo menos o teclado. Depois limpa os campos
+    do menu na FSM mas conserva *active_role*.
+    """
     try:
         await asyncio.sleep(menu_timeout)
 
         data = await state.get_data()
-        if data.get("menu_msg_id") != msg_id:
-            # já foi aberto outro menu – este não é o activo
+        if data.get("menu_msg_id") != msg_id:        # outro menu abriu entretanto
             return
 
-        # remove o teclado
+        # 1) Tentativa de apagar a mensagem
+        deleted: bool = False
         with suppress(exceptions.TelegramBadRequest):
-            await bot.edit_message_reply_markup(
-                chat_id=chat_id,
-                message_id=msg_id,
-                reply_markup=None,
-            )
+            await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            deleted = True
 
-        # limpa campos do menu mas preserva active_role
+        # 2) Se não conseguir apagar (ex.: mensagem ficou “não-editável”),
+        #    ao menos retira o teclado inline
+        if not deleted:
+            with suppress(exceptions.TelegramBadRequest):
+                await bot.edit_message_reply_markup(
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    reply_markup=None,
+                )
+
+        # limpa campos do menu e mantém active_role
         await clear_keep_role(state)
         await state.update_data(menu_msg_id=None, menu_chat_id=None)
 
-        # avisa o utilizador (desaparece ao fim de `message_timeout`)
-        warn = await bot.send_message(
-            chat_id,
-            f"⌛️ O menu ficou inactivo durante {menu_timeout}s e foi ocultado.\n"
-            "Use /start para o reabrir.",
-        )
-        await asyncio.sleep(message_timeout)
+        # aviso temporário
+        warn: Optional[Message] = None
         with suppress(exceptions.TelegramBadRequest):
-            await warn.delete()
+            warn = await bot.send_message(
+                chat_id,
+                f"⌛️ O menu ficou inactivo durante {menu_timeout}s e foi ocultado.\n"
+                "Use /start para o reabrir.",
+            )
+        if warn:
+            await asyncio.sleep(message_timeout)
+            with suppress(exceptions.TelegramBadRequest):
+                await warn.delete()
 
     except Exception:
-        # Nunca deixar a Task estoirar em background
+        # nunca deixar a Task estourar em background
         pass
 
 
