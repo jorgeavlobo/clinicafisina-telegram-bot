@@ -17,7 +17,7 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
 from bot.menus                     import show_menu
-from bot.menus.common              import start_menu_timeout      # ← agora usa helper comum
+from bot.menus.common              import start_menu_timeout
 from bot.states.menu_states        import MenuStates
 from bot.states.admin_menu_states  import AdminMenuStates
 
@@ -46,7 +46,7 @@ async def ask_role(
 ) -> None:
     """
     Envia o selector de perfis e coloca o FSM em WAIT_ROLE_CHOICE.
-    O tempo limite é gerido pelo start_menu_timeout() (common.py).
+    O tempo limite é gerido por start_menu_timeout() (common.py).
     """
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[[
@@ -67,13 +67,13 @@ async def ask_role(
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
         roles=[r.lower() for r in roles],
-        role_selector_marker=msg.message_id,      # para validações, se precisares
+        role_selector_marker=msg.message_id,      # para limpeza posterior
         menu_msg_id=msg.message_id,
         menu_chat_id=msg.chat.id,
     )
 
-    # agenda a limpeza automática (usa valores de MENU_TIMEOUT/MESSAGE_TIMEOUT)
-    start_menu_timeout(bot, msg, state)           # ← delega em common.py
+    # agenda a limpeza automática (usa MENU_TIMEOUT/MESSAGE_TIMEOUT)
+    start_menu_timeout(bot, msg, state)
 
 
 # ─────────────────── callback “role:…” ───────────────────
@@ -90,15 +90,31 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
-    # remove a mensagem do selector
-    with suppress(exceptions.TelegramBadRequest):
-        await cb.message.delete()
+    # ─── remover de forma robusta o selector ───
+    selector_id: int | None = data.get("role_selector_marker")
+    if selector_id:
+        # 1) tentar apagar
+        deleted = False
+        try:
+            await cb.bot.delete_message(cb.message.chat.id, selector_id)
+            deleted = True
+        except exceptions.TelegramBadRequest:
+            deleted = False
 
-    # limpa FSM temporária mas mantém lista de roles
+        # 2) se não conseguir, apaga “visual”
+        if not deleted:
+            with suppress(exceptions.TelegramBadRequest):
+                await cb.bot.edit_message_text(
+                    chat_id   = cb.message.chat.id,
+                    message_id= selector_id,
+                    text      = "\u200b",              # zero-width
+                    reply_markup=None,
+                )
+
+    # ─── prossegue com a troca de perfil ───
     await state.clear()
     await state.update_data(active_role=role, roles=roles)
 
-    # estado base (apenas necessário para administrador)
     if role == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
     else:
