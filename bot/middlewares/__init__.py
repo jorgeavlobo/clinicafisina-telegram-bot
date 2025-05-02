@@ -1,5 +1,12 @@
 # bot/middlewares/__init__.py
-from .role_check import RoleCheckMiddleware
-from .active_menu_middleware import ActiveMenuMiddleware
+"""
+Exporta os middlewares registados na aplicação.
+"""
 
-__all__ = ["RoleCheckMiddleware", "ActiveMenuMiddleware"]
+from .role_check_middleware     import RoleCheckMiddleware
+from .active_menu_middleware    import ActiveMenuMiddleware
+
+__all__ = [
+    "RoleCheckMiddleware",
+    "ActiveMenuMiddleware",
+]

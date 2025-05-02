@@ -3,7 +3,6 @@
 Role-Check Middleware
 ────────────────────────────────────────────────────────────
 1.  Vai buscar o utilizador à BD e coloca-o em `data["user"]`.
-    (já **não** injeta `data["roles"]`)
 
 2.  Bloqueia qualquer update sem «active_role» *excepto*:
 
