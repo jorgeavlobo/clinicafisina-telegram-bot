@@ -57,17 +57,14 @@ async def link_telegram_id(pool: Pool, user_id: str, tg_id: int) -> None:
     )
 
 
-async def get_user_roles(pool: Pool, user_id: str) -> List[str]:
-    """
-    Devolve a lista de papéis atribuídos ao utilizador,
-    sempre como strings minúsculas.
-    """
+async def get_user_roles(pool: Pool, user_id: str) -> list[str]:
     rows = await pool.fetch(
         """
         SELECT r.role_name
         FROM   user_roles ur
-        JOIN   roles       r USING (role_id)
+        JOIN   roles  r USING (role_id)
         WHERE  ur.user_id = $1
+        ORDER  BY lower(r.role_name);
         """,
         user_id,
     )
