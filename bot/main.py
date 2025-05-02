@@ -57,10 +57,10 @@ async def main() -> None:
 
     # ───── comandos do bot (barra de sugestões) ─────
     await bot.set_my_commands([
-        types.BotCommand(command="start",  description="▶️ Iniciar"),
-        types.BotCommand(command="services",  description="🩺 Serviços"),
-        types.BotCommand(command="team", description="🧑🏼‍🤝‍🧑🏽 Equipa"),
-        types.BotCommand(command="contacts", description="📞 Contactos"),
+        types.BotCommand(command="start",  description="▶️ *Iniciar*"),
+        types.BotCommand(command="services",  description="🩺 *Serviços*"),
+        types.BotCommand(command="team", description="🧑🏼‍🤝‍🧑🏽 *Equipa*"),
+        types.BotCommand(command="contacts", description="📞 *Contactos*"),
     ])
 
     # ───── servidor aiohttp ─────
