@@ -27,7 +27,7 @@ __all__ = ["back_button", "cancel_back_kbd", "start_menu_timeout"]
 
 # ───────────────────────── botões / teclados ─────────────────────────
 def back_button() -> InlineKeyboardButton:
-    return InlineKeyboardButton(text="🔵 Voltar", callback_data="back")
+    return InlineKeyboardButton(text="⬅️ Voltar", callback_data="back")
 
 
 def cancel_back_kbd() -> ReplyKeyboardMarkup:
