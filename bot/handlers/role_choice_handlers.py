@@ -2,13 +2,15 @@
 """
 Selector de perfil quando o utilizador tem ≥ 2 papéis.
 
-• Mostra inline-keyboard com timeout (gestão comum em bot/menus/common.py)
+• Mostra inline-keyboard
 • Após a escolha grava «active_role» no FSM
-• Fecha/limpa o menu de forma robusta assim que o utilizador escolhe
+• Fecha o selector de forma fluída (hide → delete async)
+• Timeout/limpeza automática delegados a bot/menus/common.py
 """
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import suppress
 from typing import Iterable
 
@@ -50,7 +52,7 @@ async def ask_role(
     """
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[
-            [types.InlineKeyboardButton(text=_label(r), callback_data=f"role:{r.lower()}")]
+            [types.InlineKeyboardButton(_label(r), callback_data=f"role:{r.lower()}")]
             for r in roles
         ]
     )
@@ -65,11 +67,12 @@ async def ask_role(
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
         roles=[r.lower() for r in roles],
+        selector_id=msg.message_id,        # ← usado no callback
         menu_msg_id=msg.message_id,
         menu_chat_id=msg.chat.id,
     )
 
-    start_menu_timeout(bot, msg, state)   # timeout/limpeza automática
+    start_menu_timeout(bot, msg, state)    # timeout/limpeza automática
 
 
 # ─────────────────── callback “role:…” ───────────────────
@@ -86,28 +89,36 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
-    # ─── fecha o selector de forma robusta ───
-    # 1) tenta apagar a própria mensagem
-    deleted = False
-    try:
-        await cb.message.delete()
-        deleted = True
-    except exceptions.TelegramBadRequest:
-        deleted = False
+    selector_id: int | None = data.get("selector_id")
 
-    # 2) se não conseguir, ao menos remove o teclado
-    if not deleted:
+    # ─── 1) hide imediato (remove teclado + texto invisível) ───
+    if selector_id:
         with suppress(exceptions.TelegramBadRequest):
-            await cb.message.edit_reply_markup(reply_markup=None)
+            await cb.bot.edit_message_reply_markup(
+                chat_id=cb.message.chat.id,
+                message_id=selector_id,
+                reply_markup=None,
+            )
+        with suppress(exceptions.TelegramBadRequest):
+            await cb.bot.edit_message_text(
+                chat_id=cb.message.chat.id,
+                message_id=selector_id,
+                text="\u200b",             # zero-width space
+            )
 
-    # ─── prossegue com a troca de perfil ───
+        # ─── 2) tentativa de delete em background ───
+        async def _try_delete():
+            with suppress(exceptions.TelegramBadRequest):
+                await cb.bot.delete_message(cb.message.chat.id, selector_id)
+        asyncio.create_task(_try_delete())
+
+    # ─── 3) prossegue com a troca de perfil ───
     await state.clear()
     await state.update_data(active_role=role, roles=roles)
 
-    if role == "administrator":
-        await state.set_state(AdminMenuStates.MAIN)
-    else:
-        await state.set_state(None)
+    await state.set_state(
+        AdminMenuStates.MAIN if role == "administrator" else None
+    )
 
     await cb.answer(f"Perfil {_label(role)} seleccionado!")
     await show_menu(cb.bot, cb.message.chat.id, state, [role])
