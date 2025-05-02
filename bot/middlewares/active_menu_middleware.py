@@ -1,27 +1,36 @@
 # bot/middlewares/active_menu_middleware.py
 """
-Bloqueia cliques em inline-keyboards que já não estão activos.
+Garante que o utilizador só interage com o *último* menu activo.
 
-Regra geral o FSM guarda:
-    • menu_msg_id
-    • menu_chat_id
+Regras
+──────
+1.  Se o FSM tiver `menu_msg_id`/`menu_chat_id`, **apenas** callbacks
+    dessa mensagem são entregues ao handler; todos os outros recebem
+    pop-up «Este menu já não está activo.».
 
-O middleware aceita callbacks que provenham **exactamente** dessa
-mensagem e bloqueia todos os outros, devolvendo o alerta
-«Este menu já não está activo.».
+2.  Se *não* existir menu registado:
+       • Durante o onboarding (AuthStates.WAITING_CONTACT /
+         AuthStates.CONFIRMING_LINK) – callbacks são permitidos.
+       • Caso contrário – qualquer callback recebe o mesmo pop-up
+         _e_ o middleware tenta apagar (ou pelo menos desactivar)
+         o teclado que originou o clique.
 
-*Extra*: se não existir nenhum menu registado (campos a `None`)
-bloqueia apenas callbacks originados por teclados de *selector* de
-perfil («role:…»), deixando passar os restantes (ex.: confirmação
-“link_yes / link_no” durante o onboarding).
+A limpeza imediata evita que o utilizador volte a clicar num teclado
+antigo que ficou esquecido no histórico.
 """
 
 from __future__ import annotations
 
+import logging
+from contextlib import suppress
 from typing import Any, Awaitable, Callable
 
-from aiogram import BaseMiddleware, types
+from aiogram import BaseMiddleware, types, exceptions
 from aiogram.fsm.context import FSMContext
+
+from bot.states.auth_states import AuthStates
+
+log = logging.getLogger(__name__)
 
 
 class ActiveMenuMiddleware(BaseMiddleware):
@@ -33,31 +42,62 @@ class ActiveMenuMiddleware(BaseMiddleware):
     ) -> Any:
 
         state: FSMContext | None = data.get("state")
-        if state is None:                         # sem contexto FSM
+        if state is None:                     # sem FSM → nada a fazer
             return await handler(event, data)
 
         stored = await state.get_data()
         menu_msg_id  = stored.get("menu_msg_id")
         menu_chat_id = stored.get("menu_chat_id")
 
-        # ───── caso 1: NÃO há menu registado ─────
-        if not menu_msg_id or not menu_chat_id:
-            # apenas bloqueia callbacks do selector «role:…»
-            if event.data and event.data.startswith("role:"):
-                await event.answer("Este menu já não está activo.", show_alert=True)
-                return
-            # outros callbacks (p.ex. onboarding) passam
-            return await handler(event, data)
+        # ───────────────────────── caso A – há menu registado ─────────────────────────
+        if menu_msg_id and menu_chat_id:
+            if (
+                event.message
+                and event.message.message_id == menu_msg_id
+                and event.message.chat.id == menu_chat_id
+            ):
+                # é o teclado activo → deixa passar
+                return await handler(event, data)
 
-        # ───── caso 2: há um menu registado ─────
-        if (
-            event.message
-            and event.message.message_id == menu_msg_id
-            and event.message.chat.id == menu_chat_id
+            # veio de teclado antigo → bloqueia + tenta limpar
+            await self._deny_and_cleanup(event)
+            return
+
+        # ───────────────────────── caso B – nenhum menu registado ─────────────────────
+        cur_state = await state.get_state()
+        if cur_state in (
+            AuthStates.WAITING_CONTACT.state,
+            AuthStates.CONFIRMING_LINK.state,
         ):
-            # é o teclado activo → deixa passar
+            # estamos no fluxo de onboarding → deixar passar
             return await handler(event, data)
 
-        # veio de um teclado antigo → bloqueia
-        await event.answer("Este menu já não está activo.", show_alert=True)
+        # fora do onboarding → tratar como menu morto
+        await self._deny_and_cleanup(event)
         return
+
+    # ------------------------------------------------------------------------
+    @staticmethod
+    async def _deny_and_cleanup(cb: types.CallbackQuery) -> None:
+        """
+        Mostra pop-up «menu inactivo» e tenta desactivar o teclado que
+        originou o callback (delete ou, em último caso, remove reply_markup).
+        """
+        with suppress(exceptions.TelegramBadRequest):
+            await cb.answer("Este menu já não está activo.", show_alert=True)
+
+        # tentar apagar a mensagem inteira…
+        deleted = False
+        if cb.message:
+            try:
+                await cb.message.delete()
+                deleted = True
+            except exceptions.TelegramBadRequest:
+                deleted = False
+
+            # …ou pelo menos remover o teclado
+            if not deleted:
+                with suppress(exceptions.TelegramBadRequest):
+                    await cb.message.edit_reply_markup(reply_markup=None)
+
+        log.debug("Callback de menu inactivo bloqueado (user=%s)", cb.from_user.id)
