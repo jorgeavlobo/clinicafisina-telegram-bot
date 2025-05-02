@@ -16,12 +16,12 @@ from aiogram import Router, types, exceptions
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
-from bot.menus                     import show_menu
-from bot.states.menu_states        import MenuStates
-from bot.states.admin_menu_states  import AdminMenuStates
+from bot.menus                    import show_menu
+from bot.states.menu_states       import MenuStates
+from bot.states.admin_menu_states import AdminMenuStates
 
 router   = Router(name="role_choice")
-_TIMEOUT = 60  # seg.
+_TIMEOUT = 60  # segundos
 
 _LABELS_PT = {
     "patient":         "Paciente",
@@ -33,7 +33,7 @@ _LABELS_PT = {
 
 
 def _label(role: str) -> str:
-    """Rótulo PT; por defeito capitaliza."""
+    """Rótulo PT; capitaliza por defeito."""
     return _LABELS_PT.get(role.lower(), role.capitalize())
 
 
@@ -56,19 +56,20 @@ async def ask_role(
 
     msg = await bot.send_message(
         chat_id,
-        "🔰 Escolha o perfil que pretende utilizar:",
+        "🔰 *Escolha o perfil:*",
         reply_markup=kbd,
+        parse_mode="Markdown",
     )
 
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
-        roles=[r.lower() for r in roles],       # ← fica guardado
+        roles=[r.lower() for r in roles],       # ← guardado para validação
         role_selector_marker=msg.message_id,
         menu_msg_id=msg.message_id,
         menu_chat_id=msg.chat.id,
     )
 
-    # timeout para invalidar o selector se o user não escolher nada
+    # cria task de timeout
     asyncio.create_task(
         _expire_selector(bot, msg.chat.id, msg.message_id, state)
     )
@@ -81,21 +82,37 @@ async def _expire_selector(
     msg_id: int,
     state: FSMContext,
 ) -> None:
+    """Apaga por completo o selector se o utilizador nada escolher em 60 s."""
     await asyncio.sleep(_TIMEOUT)
 
+    # continua só se ainda estivermos exactamente no mesmo selector
     if await state.get_state() != MenuStates.WAIT_ROLE_CHOICE.state:
         return
     if (await state.get_data()).get("role_selector_marker") != msg_id:
         return
 
-    await state.clear()   # descarta o selector
-    with suppress(exceptions.TelegramBadRequest):
-        await bot.edit_message_reply_markup(
-            chat_id=chat_id,
-            message_id=msg_id,
-            reply_markup=None,
-        )
+    # 1) tentar apagar a mensagem inteira
+    deleted = False
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        deleted = True
+    except exceptions.TelegramBadRequest:
+        deleted = False
 
+    # 2) se não deu, pelo menos limpa texto + teclado
+    if not deleted:
+        with suppress(exceptions.TelegramBadRequest):
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=msg_id,
+                text="\u200b",          # zero-width space → texto invisível
+                reply_markup=None,
+            )
+
+    # 3) limpar FSM (não há active_role nesta fase)
+    await state.clear()
+
+    # 4) aviso temporário
     warn = await bot.send_message(
         chat_id,
         "⏳ Tempo expirado. Envie /start para escolher de novo.",
@@ -111,11 +128,11 @@ async def _expire_selector(
     lambda c: c.data and c.data.startswith("role:"),
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
-    role   = cb.data.split(":", 1)[1].lower()
-    data   = await state.get_data()
-    roles  = data.get("roles", [])              # ← obtido do FSM
+    role  = cb.data.split(":", 1)[1].lower()
+    data  = await state.get_data()
+    roles = data.get("roles", [])
 
-    if role not in roles:                       # ← usa a lista lida
+    if role not in roles:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
@@ -123,7 +140,7 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     with suppress(exceptions.TelegramBadRequest):
         await cb.message.delete()
 
-    # limpa estado temporário mas mantém perfis
+    # limpa FSM temporária mas mantém lista de roles
     await state.clear()
     await state.update_data(active_role=role, roles=roles)
 
