@@ -1,7 +1,14 @@
 # bot/menus/__init__.py
 """
-Envia (ou renova) o menu principal apropriado ao perfil activo.
-[… comentário igual …]
+Constrói e gere os menus de cada perfil.
+
+• Se o utilizador tiver vários perfis e ainda não escolheu um,
+  delega no selector ask_role().
+• Mantém «active_role» mesmo após limpezas de FSM (clear_keep_role).
+• Ao abrir um menu novo *apaga todos* os menus anteriores que ainda
+  possam estar no histórico (lista menu_ids).
+• Cada envio reinicia o timeout de inactividade (MENU_TIMEOUT em
+  bot/config.py).
 """
 
 from __future__ import annotations
@@ -36,13 +43,22 @@ _ROLE_MENU = {
 }
 
 # ───────────────────────── helpers ─────────────────────────
-async def _purge_old_menu(bot: Bot, state: FSMContext) -> None:
-    data    = await state.get_data()
-    msg_id  = data.get("menu_msg_id")
-    chat_id = data.get("menu_chat_id")
-    if msg_id and chat_id:
+async def _purge_all_menus(bot: Bot, state: FSMContext) -> None:
+    """
+    Apaga **todos** os menus cujo ID esteja registado em `menu_ids`
+    (lista guardada no FSM). Essa lista é actualizada no final de
+    show_menu() para conter só o menu acabado de abrir.
+    """
+    data      = await state.get_data()
+    chat_id   = data.get("menu_chat_id")        # mesmo chat p/ todos
+    menu_ids: List[int] = data.get("menu_ids", [])
+
+    if not chat_id or not menu_ids:
+        return
+
+    for mid in menu_ids:
         with suppress(exceptions.TelegramBadRequest):
-            await bot.delete_message(chat_id, msg_id)
+            await bot.delete_message(chat_id, mid)
 
 # ───────────────────────── API pública ─────────────────────────
 async def show_menu(
@@ -69,7 +85,7 @@ async def show_menu(
     if active is None:
         if len(roles) > 1:
             from bot.handlers.role_choice_handlers import ask_role   # evitar ciclo
-            await _purge_old_menu(bot, state)
+            await _purge_all_menus(bot, state)
             await ask_role(bot, chat_id, state, roles)
             return
         active = roles[0]
@@ -86,8 +102,8 @@ async def show_menu(
         )
         return
 
-    # 4) remove menu antigo e envia o novo
-    await _purge_old_menu(bot, state)
+    # 4) apaga todos os menus antigos antes de criar um novo
+    await _purge_all_menus(bot, state)
 
     title = (
         "💻 *Menu administrador:*"
@@ -100,13 +116,19 @@ async def show_menu(
         reply_markup=builder(),
         parse_mode="Markdown",
     )
-    await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=chat_id)
 
-    # 5) estado FSM base
+    # 5) regista **só** o menu agora criado
+    await state.update_data(
+        menu_msg_id = msg.message_id,
+        menu_chat_id = chat_id,
+        menu_ids     = [msg.message_id],        # lista reiniciada
+    )
+
+    # 6) estado FSM base
     if active == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
     else:
         await state.set_state(None)   # manter FSM “limpa”
 
-    # 6) (re)inicia timeout automático
+    # 7) (re)inicia timeout automático
     start_menu_timeout(bot, msg, state)
