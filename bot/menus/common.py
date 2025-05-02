@@ -49,36 +49,38 @@ async def _hide_menu_after(
     message_timeout: int,
 ) -> None:
     """
-    Após `menu_timeout` s tenta apagar COMPLETAMENTE a mensagem-menu.
-    Se não puder, remove pelo menos o inline-keyboard. Depois limpa
-    os campos do menu na FSM mas mantém *active_role*.
+    Após `menu_timeout` s tenta **apagar** a mensagem-menu.
+    Se não puder, limpa o texto (U+200B) e remove o teclado.
+    Finalmente limpa os campos `menu_*` no FSM mas conserva *active_role*.
     """
     try:
         await asyncio.sleep(menu_timeout)
 
         data = await state.get_data()
-        if data.get("menu_msg_id") != msg_id:          # outro menu activo entretanto
+        if data.get("menu_msg_id") != msg_id:        # há um menu mais recente
             return
 
-        # 1) tenta apagar a mensagem
-        deleted: bool = False
+        # 1) tenta apagar
+        deleted = False
         try:
             await bot.delete_message(chat_id=chat_id, message_id=msg_id)
             deleted = True
         except exceptions.TelegramBadRequest:
-            # Não conseguimos apagar (mensagem antiga, sem permissões, …)
             deleted = False
 
-        # 2) Se não foi possível, ao menos remove o teclado
+        # 2) se não conseguiu, “apaga visualmente”:
+        #    • remove teclado
+        #    • substitui texto por carácter invisível
         if not deleted:
             with suppress(exceptions.TelegramBadRequest):
-                await bot.edit_message_reply_markup(
+                await bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=msg_id,
+                    text="\u200b",                    # ZERO WIDTH SPACE
                     reply_markup=None,
                 )
 
-        # limpa campos do menu e preserva active_role
+        # limpa registos do menu mas mantém o perfil activo
         await clear_keep_role(state)
         await state.update_data(menu_msg_id=None, menu_chat_id=None)
 
