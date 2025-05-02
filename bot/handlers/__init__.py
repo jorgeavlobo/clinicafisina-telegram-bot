@@ -17,6 +17,7 @@ from .accountant_handlers   import router as accountant_router
 from .administrator_handlers import router as admin_router
 from .add_user_handlers     import router as add_user_router
 from .debug_handlers        import router as debug_router
+from .debug_fsm_handlers import router as debug_fsm_router
 
 routers: List[Router] = [
     system_router,
@@ -29,6 +30,7 @@ routers: List[Router] = [
     admin_router,
     add_user_router,
     debug_router,
+    debug_fsm_router,
 ]
 
 def register_routers(dp: Dispatcher) -> None:
