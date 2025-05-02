@@ -1,10 +1,9 @@
 # bot/middlewares/role_check.py
 """
 Role-Check Middleware
-
-1.  Vai buscar (user, roles) à BD e coloca em `data`:
-        data["user"]   – linha completa da tabela *users*
-        data["roles"]  – lista de perfis em minúsculas
+────────────────────────────────────────────────────────────
+1.  Vai buscar o utilizador à BD e coloca-o em `data["user"]`.
+    (já **não** injeta `data["roles"]`)
 
 2.  Bloqueia qualquer update sem «active_role» *excepto*:
 
@@ -15,55 +14,52 @@ Role-Check Middleware
         – AuthStates.WAITING_CONTACT
         – AuthStates.CONFIRMING_LINK
     • Comandos utilitários
-        – /start   (todas as variantes /start, /start@bot, /start abc …)
+        – /start   (todas as variantes /start, /start@bot, /start payload …)
         – /admin
         – /whoami
 """
 
 from __future__ import annotations
 
-import logging
-import time
+import logging, time
 from contextlib import suppress
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from aiogram import BaseMiddleware, exceptions, types
 from aiogram.fsm.context import FSMContext
 
-from bot.database import queries as q
 from bot.database.connection import get_pool
-from bot.states.auth_states import AuthStates
+from bot.database import queries as q
 from bot.states.menu_states import MenuStates
+from bot.states.auth_states  import AuthStates
 
 log = logging.getLogger(__name__)
 
 # ───────────────────────── cache muito simples ─────────────────────────
 _CACHE: Dict[int, Tuple[Optional[Dict[str, Any]], List[str], float]] = {}
-_TTL = 60.0  # segundos
-
+_TTL = 60.0                                    # segundos
 _ALLOWED_CMDS = {"/admin", "/whoami"}          # /start é tratado à parte
 
 
-class RoleCheckMiddleware(BaseMiddleware):
-    async def __call__(                       # type: ignore[override]
+class RoleCheckMiddleware(BaseMiddleware):                         # type: ignore[misc]
+    async def __call__(                                            # type: ignore[override]
         self,
         handler: Callable[[types.TelegramObject, Dict[str, Any]], Awaitable[Any]],
-        event: types.TelegramObject,
-        data: Dict[str, Any],
+        event:   types.TelegramObject,
+        data:    Dict[str, Any],
     ) -> Any:
 
-        # ───── 1) injeta (user, roles) usando cache ─────
+        # 1) injeta apenas o registo do utilizador
         tg_user: Optional[types.User] = data.get("event_from_user")
         if tg_user:
-            user, roles = await self._get_user_and_roles(tg_user.id)
+            user, _roles = await self._get_user_and_roles(tg_user.id)
             if user:
-                data["user"] = user
-                data["roles"] = roles
+                data["user"] = user                     # ← só isto
 
         state: FSMContext = data["state"]
         cur_state = await state.get_state()
 
-        # ───── 2) situações sempre permitidas ─────
+        # 2) situações sempre permitidas
         if cur_state in (
             MenuStates.WAIT_ROLE_CHOICE.state,
             AuthStates.WAITING_CONTACT.state,
@@ -71,35 +67,32 @@ class RoleCheckMiddleware(BaseMiddleware):
         ):
             return await handler(event, data)
 
-        # clique em «role:xxx» dentro do selector
+        # clique em «role:…» dentro do selector
         if isinstance(event, types.CallbackQuery) and \
            event.data and event.data.startswith("role:"):
             return await handler(event, data)
 
         # comandos utilitários antes do login
         if isinstance(event, types.Message):
-            raw = event.text or event.caption          # em canais pode vir como caption
+            raw = event.text or event.caption           # em canais pode vir como caption
             if raw:
                 cmd = raw.split()[0].lower()
-
-                # aceita qualquer /start ( /start , /start@bot , /start payload )
-                if cmd.startswith("/start"):
+                if cmd.startswith("/start"):            # qualquer variante de /start
                     return await handler(event, data)
-
                 if cmd in _ALLOWED_CMDS:
                     return await handler(event, data)
 
-        # ───── 3) exige active_role ─────
+        # 3) exige active_role
         if (await state.get_data()).get("active_role"):
             return await handler(event, data)
 
-        # ───── 4) bloqueado ─────
+        # 4) bloqueado
         await self._deny(event)
         uid = tg_user.id if tg_user else "?"
         log.info("Blocado por falta de role activo – user %s", uid)
         return None
 
-    # ───────────────── helpers ─────────────────
+    # ───────── helpers ─────────
     async def _get_user_and_roles(
         self,
         tg_id: int,
@@ -109,11 +102,9 @@ class RoleCheckMiddleware(BaseMiddleware):
         if cached and now - cached[2] < _TTL:
             return cached[0], cached[1]
 
-        pool = await get_pool()
-        user = await q.get_user_by_telegram_id(pool, tg_id)
-        roles: List[str] = []
-        if user:
-            roles = [r.lower() for r in await q.get_user_roles(pool, user["user_id"])]
+        pool  = await get_pool()
+        user  = await q.get_user_by_telegram_id(pool, tg_id)
+        roles = [r.lower() for r in await q.get_user_roles(pool, user["user_id"])] if user else []
 
         _CACHE[tg_id] = (user, roles, now)
         return user, roles
