@@ -16,3 +16,8 @@ async def dump_fsm(msg: Message, state: FSMContext):
         f"*FSM data*:\n```json\n{json.dumps(data, indent=2, ensure_ascii=False)}```"
     )
     await msg.answer(txt, parse_mode="Markdown")
+
+@router.message(Command("resetfsm"))
+async def reset_fsm(msg: Message, state: FSMContext):
+    await state.clear()
+    await msg.answer("FSM limpo.")
