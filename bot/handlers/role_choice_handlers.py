@@ -2,13 +2,13 @@
 """
 Selector de perfil quando o utilizador tem ≥ 2 papéis.
 
-• Mostra um inline-keyboard com timeout de 60 s
+• Mostra inline-keyboard
 • Após a escolha grava «active_role» no FSM
+• Timeout, limpeza de teclado/título e avisos delegados a common.py
 """
 
 from __future__ import annotations
 
-import asyncio
 from contextlib import suppress
 from typing import Iterable
 
@@ -16,12 +16,12 @@ from aiogram import Router, types, exceptions
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
-from bot.menus                    import show_menu
-from bot.states.menu_states       import MenuStates
-from bot.states.admin_menu_states import AdminMenuStates
+from bot.menus                     import show_menu
+from bot.menus.common              import start_menu_timeout      # ← agora usa helper comum
+from bot.states.menu_states        import MenuStates
+from bot.states.admin_menu_states  import AdminMenuStates
 
-router   = Router(name="role_choice")
-_TIMEOUT = 60  # segundos
+router = Router(name="role_choice")
 
 _LABELS_PT = {
     "patient":         "Paciente",
@@ -33,7 +33,7 @@ _LABELS_PT = {
 
 
 def _label(role: str) -> str:
-    """Rótulo PT; capitaliza por defeito."""
+    """Rótulo em PT (capitaliza se não existir tradução)."""
     return _LABELS_PT.get(role.lower(), role.capitalize())
 
 
@@ -44,7 +44,10 @@ async def ask_role(
     state: FSMContext,
     roles: Iterable[str],
 ) -> None:
-    """Envia o selector de perfis e coloca o FSM em WAIT_ROLE_CHOICE."""
+    """
+    Envia o selector de perfis e coloca o FSM em WAIT_ROLE_CHOICE.
+    O tempo limite é gerido pelo start_menu_timeout() (common.py).
+    """
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[[
             types.InlineKeyboardButton(
@@ -63,63 +66,14 @@ async def ask_role(
 
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
-        roles=[r.lower() for r in roles],       # ← guardado para validação
-        role_selector_marker=msg.message_id,
+        roles=[r.lower() for r in roles],
+        role_selector_marker=msg.message_id,      # para validações, se precisares
         menu_msg_id=msg.message_id,
         menu_chat_id=msg.chat.id,
     )
 
-    # cria task de timeout
-    asyncio.create_task(
-        _expire_selector(bot, msg.chat.id, msg.message_id, state)
-    )
-
-
-# ───────────────────────── timeout ─────────────────────────
-async def _expire_selector(
-    bot: types.Bot,
-    chat_id: int,
-    msg_id: int,
-    state: FSMContext,
-) -> None:
-    """Apaga por completo o selector se o utilizador nada escolher em 60 s."""
-    await asyncio.sleep(_TIMEOUT)
-
-    # continua só se ainda estivermos exactamente no mesmo selector
-    if await state.get_state() != MenuStates.WAIT_ROLE_CHOICE.state:
-        return
-    if (await state.get_data()).get("role_selector_marker") != msg_id:
-        return
-
-    # 1) tentar apagar a mensagem inteira
-    deleted = False
-    try:
-        await bot.delete_message(chat_id=chat_id, message_id=msg_id)
-        deleted = True
-    except exceptions.TelegramBadRequest:
-        deleted = False
-
-    # 2) se não deu, pelo menos limpa texto + teclado
-    if not deleted:
-        with suppress(exceptions.TelegramBadRequest):
-            await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=msg_id,
-                text="\u200b",          # zero-width space → texto invisível
-                reply_markup=None,
-            )
-
-    # 3) limpar FSM (não há active_role nesta fase)
-    await state.clear()
-
-    # 4) aviso temporário
-    warn = await bot.send_message(
-        chat_id,
-        "⏳ Tempo expirado. Envie /start para escolher de novo.",
-    )
-    await asyncio.sleep(_TIMEOUT)
-    with suppress(exceptions.TelegramBadRequest):
-        await warn.delete()
+    # agenda a limpeza automática (usa valores de MENU_TIMEOUT/MESSAGE_TIMEOUT)
+    start_menu_timeout(bot, msg, state)           # ← delega em common.py
 
 
 # ─────────────────── callback “role:…” ───────────────────
@@ -144,7 +98,7 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await state.update_data(active_role=role, roles=roles)
 
-    # estado base (só necessário para admin)
+    # estado base (apenas necessário para administrador)
     if role == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
     else:
