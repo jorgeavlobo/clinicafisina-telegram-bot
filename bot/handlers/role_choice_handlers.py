@@ -17,7 +17,7 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
 from bot.menus                     import show_menu
-from bot.menus.common              import start_menu_timeout
+from bot.menus.ui_helpers          import start_menu_timeout
 from bot.states.menu_states        import MenuStates
 from bot.states.admin_menu_states  import AdminMenuStates
 

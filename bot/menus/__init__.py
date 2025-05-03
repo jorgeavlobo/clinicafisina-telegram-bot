@@ -23,7 +23,7 @@ from aiogram.fsm.context import FSMContext
 
 from bot.states.admin_menu_states import AdminMenuStates
 from bot.utils.fsm_helpers        import clear_keep_role
-from bot.menus.common             import start_menu_timeout
+from bot.menus.ui_helpers         import start_menu_timeout
 
 # builders de cada perfil
 from .patient_menu         import build_menu as _patient
