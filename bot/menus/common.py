@@ -1,10 +1,9 @@
 # bot/menus/common.py
 """
-Shared UI helpers.
+Botões e utilitários de UI partilhados.
 
 • back_button() / cancel_back_kbd()
-• start_menu_timeout()          – background timer that hides an **idle** menu
-• hide_menu_now()               – helper that hides a menu *immediately*
+• start_menu_timeout() – apaga o menu depois de X s
 """
 
 from __future__ import annotations
@@ -14,23 +13,18 @@ from contextlib import suppress
 from typing import List, Optional
 
 from aiogram import Bot, exceptions
-from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton, Message,
 )
+from aiogram.fsm.context import FSMContext
 
 from bot.config import MENU_TIMEOUT, MESSAGE_TIMEOUT
 from bot.utils.fsm_helpers import clear_keep_role
 
-__all__ = [
-    "back_button",
-    "cancel_back_kbd",
-    "start_menu_timeout",
-    "hide_menu_now",
-]
+__all__ = ["back_button", "cancel_back_kbd", "start_menu_timeout"]
 
-# ────────────────────────── keyboards ──────────────────────────
+# ───────────────────────── botões / teclados ─────────────────────────
 def back_button() -> InlineKeyboardButton:
     return InlineKeyboardButton(text="⬅️ Voltar", callback_data="back")
 
@@ -45,67 +39,7 @@ def cancel_back_kbd() -> ReplyKeyboardMarkup:
         one_time_keyboard=False,
     )
 
-# ─────────────────────── helpers – hide menu now ───────────────
-async def hide_menu_now(
-    bot: Bot,
-    chat_id: int,
-    msg_id: int,
-    state: FSMContext,
-    message_timeout: int = MESSAGE_TIMEOUT,
-) -> None:
-    """
-    Try to delete the message *right away*; if Telegram refuses,
-    fall back to:
-
-    • remove inline-keyboard
-    • replace text with ZERO-WIDTH SPACE
-
-    State fields menu_* are cleared but **active_role** is preserved.
-    """
-    # 1) delete
-    deleted = False
-    try:
-        await bot.delete_message(chat_id, msg_id)
-        deleted = True
-    except exceptions.TelegramBadRequest:
-        deleted = False
-
-    # 2) visual fallback
-    if not deleted:
-        with suppress(exceptions.TelegramBadRequest):
-            await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=msg_id,
-                text="\u200B",           # invisible char
-                reply_markup=None,
-            )
-
-    # 3) housekeeping
-    await clear_keep_role(state)
-    data = await state.get_data()
-    menu_ids: List[int] = data.get("menu_ids", [])
-    if msg_id in menu_ids:
-        menu_ids.remove(msg_id)
-
-    await state.update_data(
-        menu_msg_id=None,
-        menu_chat_id=None,
-        menu_ids=menu_ids,
-    )
-
-    # 4) short heads-up (auto-delete)
-    warn: Optional[Message] = None
-    with suppress(exceptions.TelegramBadRequest):
-        warn = await bot.send_message(
-            chat_id,
-            "⌛️ O menu anterior foi ocultado.",
-        )
-    if warn:
-        await asyncio.sleep(message_timeout)
-        with suppress(exceptions.TelegramBadRequest):
-            await warn.delete()
-
-# ───────────────────── background idle timer ───────────────────
+# ───────────────────────── timeout do menu ─────────────────────────
 async def _hide_menu_after(
     bot: Bot,
     chat_id: int,
@@ -114,21 +48,66 @@ async def _hide_menu_after(
     menu_timeout: int,
     message_timeout: int,
 ) -> None:
+    """
+    Após `menu_timeout` s tenta **apagar** a mensagem-menu.
+    Se não puder, remove teclado e substitui texto por ZERO-WIDTH SPACE.
+    No fim, actualiza os campos `menu_*` e limpa/atualiza a lista
+    `menu_ids`, preservando `active_role`.
+    """
     try:
         await asyncio.sleep(menu_timeout)
 
-        # there is a newer menu – abort
         data = await state.get_data()
-        if data.get("menu_msg_id") != msg_id:
+        if data.get("menu_msg_id") != msg_id:          # há menu mais recente
             return
 
-        # reuse the immediate helper
-        await hide_menu_now(
-            bot, chat_id, msg_id, state,
-            message_timeout=message_timeout,
+        # 1) tenta apagar completamente
+        deleted = False
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            deleted = True
+        except exceptions.TelegramBadRequest:
+            deleted = False
+
+        # 2) se não conseguiu, “esvazia” a mensagem
+        if not deleted:
+            with suppress(exceptions.TelegramBadRequest):
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    text="\u200B",                     # ZERO WIDTH SPACE
+                    reply_markup=None,
+                )
+
+        # 3) limpa registos do menu mas mantém active_role
+        await clear_keep_role(state)
+
+        # – remove este ID da lista de menus (se existir)
+        menu_ids: List[int] = data.get("menu_ids", [])
+        if msg_id in menu_ids:
+            menu_ids.remove(msg_id)
+
+        await state.update_data(
+            menu_msg_id=None,
+            menu_chat_id=None,
+            menu_ids=menu_ids,                         # pode ficar []
         )
 
-    except Exception:               # never let a task blow up silently
+        # 4) aviso temporário
+        warn: Optional[Message] = None
+        with suppress(exceptions.TelegramBadRequest):
+            warn = await bot.send_message(
+                chat_id,
+                f"⌛️ O menu ficou inactivo durante {menu_timeout}s e foi ocultado.\n"
+                "Use /start para o reabrir.",
+            )
+        if warn:
+            await asyncio.sleep(message_timeout)
+            with suppress(exceptions.TelegramBadRequest):
+                await warn.delete()
+
+    except Exception:
+        # nunca deixar a Task estourar em background
         pass
 
 
@@ -140,7 +119,10 @@ def start_menu_timeout(
     message_timeout: int = MESSAGE_TIMEOUT,
 ) -> None:
     """
-    Starts (or restarts) the idle-timeout for the current menu.
+    Inicia (ou reinicia) o cronómetro de inactividade do menu.
+
+    ⚠️ Não guarda o objecto `asyncio.Task` no FSM – evita erros de
+       serialização na storage.
     """
     asyncio.create_task(
         _hide_menu_after(
