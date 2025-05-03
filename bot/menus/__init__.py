@@ -5,8 +5,8 @@ Constrói e gere os menus de cada perfil.
 • Se o utilizador tiver vários perfis e ainda não escolheu um,
   delega no selector ask_role().
 • Mantém «active_role» mesmo após limpezas de FSM (clear_keep_role).
-• Ao abrir um menu novo *apaga todos* os menus anteriores que ainda
-  possam estar no histórico (lista menu_ids).
+• Ao abrir um menu novo substitui o menu anterior com `edit_message_text` (sem salto visual);
+  em caso de falha, apaga e volta a enviar (fallback).
 • Cada envio reinicia o timeout de inactividade (MENU_TIMEOUT em
   bot/config.py).
 """
@@ -85,7 +85,6 @@ async def show_menu(
     if active is None:
         if len(roles) > 1:
             from bot.handlers.role_choice_handlers import ask_role   # evitar ciclo
-            await _purge_all_menus(bot, state)
             await ask_role(bot, chat_id, state, roles)
             return
         active = roles[0]
@@ -102,22 +101,49 @@ async def show_menu(
         )
         return
 
-    # 4) apaga todos os menus antigos antes de criar um novo
-    await _purge_all_menus(bot, state)
-
+    # 4) substitui o menu anterior ou envia um novo
     title = (
         "💻 *Menu administrador:*"
         if active == "administrator"
         else f"👤 *{active.title()}* – menu principal"
     )
-    msg = await bot.send_message(
-        chat_id,
-        title,
-        reply_markup=builder(),
-        parse_mode="Markdown",
-    )
+    prev_msg_id = data.get("menu_msg_id")
+    prev_chat_id = data.get("menu_chat_id")
+    msg = None
+    if prev_msg_id and prev_chat_id:
+        # Tenta editar a mensagem anterior
+        try:
+            msg = await bot.edit_message_text(
+                title,
+                chat_id=prev_chat_id,
+                message_id=prev_msg_id,
+                reply_markup=builder(),
+                parse_mode="Markdown",
+            )
+            # Remove outros menus antigos (se existirem)
+            menu_ids: List[int] = data.get("menu_ids", [])
+            for mid in menu_ids:
+                if mid != prev_msg_id:
+                    with suppress(exceptions.TelegramBadRequest):
+                        await bot.delete_message(prev_chat_id, mid)
+        except exceptions.TelegramBadRequest:
+            # Falhou editar, faz envio normal (fallback)
+            await _purge_all_menus(bot, state)
+            msg = await bot.send_message(
+                chat_id,
+                title,
+                reply_markup=builder(),
+                parse_mode="Markdown",
+            )
+    else:
+        msg = await bot.send_message(
+            chat_id,
+            title,
+            reply_markup=builder(),
+            parse_mode="Markdown",
+        )
 
-    # 5) regista **só** o menu agora criado
+    # 5) regista **só** o menu actual
     await state.update_data(
         menu_msg_id = msg.message_id,
         menu_chat_id = chat_id,
