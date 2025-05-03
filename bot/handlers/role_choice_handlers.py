@@ -12,6 +12,7 @@ import asyncio
 from contextlib import suppress
 from typing import Iterable
 
+import logging
 from aiogram import Router, types, exceptions
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
@@ -81,37 +82,24 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     selector_id = data.get("menu_msg_id")
     selector_chat = data.get("menu_chat_id")
 
-    # Passo 1: Tornar o menu invisível (remover teclado e dar feedback temporário)
-    try:
-        await cb.bot.edit_message_text(
-            chat_id=selector_chat,
-            message_id=selector_id,
-            text="⏳ Processando sua seleção...",
-            reply_markup=None  # Remove os botões
-        )
-    except exceptions.TelegramBadRequest:
-        # Se falhar, logar o erro, mas prosseguir
-        logging.error(f"Erro ao tornar o menu invisível: chat {selector_chat}, msg {selector_id}")
-
-    # Passo 2: Substituir por caractere invisível (após breve intervalo)
-    await asyncio.sleep(1)  # 1 segundo para o usuário ver o "Processando..."
+    # Passo 1: Tentar editar a mensagem para torná-la invisível
     try:
         await cb.bot.edit_message_text(
             chat_id=selector_chat,
             message_id=selector_id,
             text="\u200B",  # Espaço de largura zero
-            reply_markup=None
+            reply_markup=None  # Remove os botões
         )
-    except exceptions.TelegramBadRequest:
-        # Se falhar, logar, mas prosseguir
-        logging.error(f"Erro ao substituir por caractere invisível: chat {selector_chat}, msg {selector_id}")
+        logging.info(f"Mensagem {selector_id} editada para ficar invisível.")
+    except exceptions.TelegramBadRequest as e:
+        logging.error(f"Erro ao editar a mensagem {selector_id}: {e}")
 
-    # Passo 3: Tentar apagar a mensagem
+    # Passo 2: Tentar apagar a mensagem
     try:
         await cb.bot.delete_message(chat_id=selector_chat, message_id=selector_id)
-    except exceptions.TelegramBadRequest:
-        # Se falhar, a mensagem já está invisível, então não é crítico
-        logging.warning(f"Não foi possível apagar a mensagem: chat {selector_chat}, msg {selector_id}")
+        logging.info(f"Mensagem {selector_id} apagada com sucesso.")
+    except exceptions.TelegramBadRequest as e:
+        logging.warning(f"Não foi possível apagar a mensagem {selector_id}: {e}")
 
     # Prosseguir com a troca de perfil
     await state.clear()
@@ -122,5 +110,5 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     else:
         await state.set_state(None)
 
-    await cb.answer(f"Perfil {_label(role)} seleccionado!")
+    await cb.answer(f"Perfil {role} seleccionado!")
     await show_menu(cb.bot, cb.message.chat.id, state, [role])
