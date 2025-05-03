@@ -60,15 +60,42 @@ async def _replace_menu(
     kbd: types.InlineKeyboardMarkup,
 ) -> None:
     """Edita (ou cria) a mensagem-menu e reinicia o timeout."""
-    await state.update_data(menu_msg_id=cb.message.message_id,
-                            menu_chat_id=cb.message.chat.id)
-    try:
-        await cb.message.edit_text(text, reply_markup=kbd, parse_mode="Markdown")
-        msg = cb.message
-    except exceptions.TelegramBadRequest:
-        await cb.message.delete()
+    # Obtém os dados atuais do estado
+    data = await state.get_data()
+    menu_msg_id = data.get("menu_msg_id")
+    menu_chat_id = data.get("menu_chat_id")
+
+    print(f"Tentando editar mensagem: ID={menu_msg_id}, Chat={menu_chat_id}")
+
+    if menu_msg_id and menu_chat_id:
+        try:
+            # Tenta editar a mensagem existente
+            await cb.bot.edit_message_text(
+                chat_id=menu_chat_id,
+                message_id=menu_msg_id,
+                text=text,
+                reply_markup=kbd,
+                parse_mode="Markdown"
+            )
+            print(f"Mensagem {menu_msg_id} editada com sucesso no chat {menu_chat_id}")
+            msg = cb.message
+        except exceptions.TelegramBadRequest as e:
+            print(f"Falha ao editar mensagem {menu_msg_id}: {e}")
+            # Deleta a mensagem antiga, se possível
+            try:
+                await cb.bot.delete_message(chat_id=menu_chat_id, message_id=menu_msg_id)
+                print(f"Mensagem {menu_msg_id} deletada")
+            except exceptions.TelegramBadRequest:
+                print(f"Não foi possível deletar mensagem {menu_msg_id}")
+            # Envia uma nova mensagem
+            msg = await cb.message.answer(text, reply_markup=kbd, parse_mode="Markdown")
+            await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
+            print(f"Nova mensagem enviada: ID={msg.message_id}, Chat={msg.chat.id}")
+    else:
+        # Se não houver mensagem anterior, envia uma nova
         msg = await cb.message.answer(text, reply_markup=kbd, parse_mode="Markdown")
         await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
+        print(f"Menu inicial enviado: ID={msg.message_id}, Chat={msg.chat.id}")
 
     start_menu_timeout(cb.bot, msg, state)
 
