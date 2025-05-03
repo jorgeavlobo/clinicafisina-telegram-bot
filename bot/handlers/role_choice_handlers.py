@@ -2,11 +2,9 @@
 """
 Selector de perfil quando o utilizador tem ≥ 2 papéis.
 
-• Mostra inline-keyboard (timeout é gerido em bot/menus/common.py)
-• Depois da escolha grava «active_role» no FSM
-• Remove SEMPRE a mensagem do selector:
-      cb.message.delete()
-   →  se falhar, cb.message.edit_text("\u200b", reply_markup=None)
+• Mostra inline-keyboard (timeout generico em bot/menus/common.py)
+• Guarda TODOS os IDs de selectors abertos
+• Quando o utilizador escolhe, remove todas as cópias que possam existir
 """
 
 from __future__ import annotations
@@ -25,7 +23,6 @@ from bot.states.admin_menu_states  import AdminMenuStates
 
 router = Router(name="role_choice")
 
-# ────────────────────────── rótulos PT ──────────────────────────
 _LABELS_PT = {
     "patient":         "🧑🏼‍🦯 Paciente",
     "caregiver":       "🤝🏼 Cuidador",
@@ -36,6 +33,7 @@ _LABELS_PT = {
 def _label(role: str) -> str:
     return _LABELS_PT.get(role.lower(), role.capitalize())
 
+
 # ───────────────────────── ask_role ─────────────────────────
 async def ask_role(
     bot: types.Bot,
@@ -43,8 +41,7 @@ async def ask_role(
     state: FSMContext,
     roles: Iterable[str],
 ) -> None:
-    """Envia o selector de perfis e coloca o FSM em WAIT_ROLE_CHOICE."""
-
+    """Envia o selector de perfis e regista TODAS as mensagens enviadas."""
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[[
             types.InlineKeyboardButton(text=_label(r), callback_data=f"role:{r.lower()}")
@@ -58,15 +55,20 @@ async def ask_role(
         parse_mode="Markdown",
     )
 
-    # regista a mensagem como “menu activo” (+ lista de roles)
+    data = await state.get_data()
+    menu_ids: list[int] = data.get("menu_ids", [])        # ← acumular IDs
+    menu_ids.append(msg.message_id)
+
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
         roles=[r.lower() for r in roles],
-        menu_msg_id=msg.message_id,
+        menu_ids=menu_ids,            # lista completa
+        menu_msg_id=msg.message_id,   # último aberto
         menu_chat_id=msg.chat.id,
     )
 
-    start_menu_timeout(bot, msg, state)   # timeout automático comum
+    start_menu_timeout(bot, msg, state)                   # timeout genérico
+
 
 # ─────────────────── callback «role:…» ────────────────────
 @router.callback_query(
@@ -74,38 +76,35 @@ async def ask_role(
     F.data.startswith("role:"),
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
-    role  = cb.data.split(":", 1)[1].lower()
-    data  = await state.get_data()
-    roles = data.get("roles", [])
+    role   = cb.data.split(":", 1)[1].lower()
+    data   = await state.get_data()
+    roles  = data.get("roles", [])
+    menu_ids: list[int] = data.get("menu_ids", [])
 
     if role not in roles:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
-    # 1) responde logo à callback (fecha o “loading” no cliente)
-    await cb.answer(f"Perfil {_label(role)} seleccionado!")
-
-    # 2) tenta APAGAR a mensagem-menu
-    deleted = False
-    try:
-        await cb.message.delete()          # mensagem que originou o callback
-        deleted = True
-    except exceptions.TelegramBadRequest:
-        pass
-
-    # 3) se não conseguiu (p.e. falta de permissão), oculta conteúdo/teclado
-    if not deleted:
+    # ─── remover TODOS os selectors que possam existir ───
+    for mid in menu_ids:
         with suppress(exceptions.TelegramBadRequest):
-            await cb.message.edit_text("\u200b", reply_markup=None)  # invisível
+            await cb.bot.delete_message(cb.message.chat.id, mid)
+        with suppress(exceptions.TelegramBadRequest):
+            await cb.bot.edit_message_text(
+                chat_id=cb.message.chat.id,
+                message_id=mid,
+                text="\u200b",
+                reply_markup=None,
+            )
 
-    # 4) actualiza FSM: limpa dados temporários e guarda papel activo
+    # ─── prossegue com a troca de perfil ───
     await state.clear()
-    await state.update_data(active_role=role, roles=roles)
+    await state.update_data(active_role=role)   # já não precisamos de roles/menu_ids
 
     if role == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
     else:
         await state.set_state(None)
 
-    # 5) mostra o menu correspondente ao perfil escolhido
+    await cb.answer(f"Perfil {_label(role)} seleccionado!")
     await show_menu(cb.bot, cb.from_user.id, state, [role])
