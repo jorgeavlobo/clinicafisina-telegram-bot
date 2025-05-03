@@ -17,7 +17,7 @@ from aiogram.fsm.context import FSMContext
 
 from bot.states.admin_menu_states import AdminMenuStates
 from bot.states.add_user_flow     import AddUserFlow      # fluxo de adição
-from bot.menus.common             import (
+from bot.menus.ui_helpers         import (
     back_button,
     start_menu_timeout,
     cancel_back_kbd,
