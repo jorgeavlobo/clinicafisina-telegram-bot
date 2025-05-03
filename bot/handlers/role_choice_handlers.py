@@ -2,15 +2,15 @@
 """
 Selector de perfil quando o utilizador tem ≥ 2 papéis.
 
-• Mostra inline-keyboard (timeout genérico em bot/menus/common.py)
+• Mostra inline-keyboard (timeout em bot/menus/common.py)
 • Guarda *todos* os IDs de selectors abertos
-• Quando o utilizador escolhe:
-      – “esvazia” selectors antigos
-      – EDITA o selector clicado → converte-o no menu principal
-        (transição imperceptível; se falhar há fallback)
+• Escolha do perfil:
+      1) edita IMEDIATAMENTE o selector clicado → vira menu principal
+      2) faz limpeza dos selectors antigos em background (sem flicker)
 """
 
 from __future__ import annotations
+import asyncio
 from contextlib import suppress
 from typing import Iterable, List
 
@@ -78,8 +78,8 @@ async def ask_role(
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
         roles=[r.lower() for r in roles],
-        menu_ids=menu_ids,            # todos os selectors abertos
-        menu_msg_id=msg.message_id,   # último aberto
+        menu_ids=menu_ids,
+        menu_msg_id=msg.message_id,
         menu_chat_id=msg.chat.id,
     )
 
@@ -100,19 +100,7 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
-    # ─── 1) “esvazia” selectors antigos (≠ mensagem clicada) ───
-    for mid in menu_ids:
-        if mid == cb.message.message_id:
-            continue
-        with suppress(exceptions.TelegramBadRequest):
-            await cb.bot.edit_message_text(
-                chat_id   = cb.message.chat.id,
-                message_id= mid,
-                text      = "\u200b",       # ZERO-WIDTH SPACE
-                reply_markup=None,
-            )
-
-    # ─── 2) converte o selector clicado em MENU PRINCIPAL ───
+    # ─── 1) EDITA o selector clicado → menu principal ───
     builder = _ROLE_MENU.get(role)
     title   = (
         "💻 *Menu administrador:*"
@@ -121,7 +109,6 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     )
 
     try:
-        # edição in-place  → transição suave
         await cb.message.edit_text(
             title,
             reply_markup=builder(),
@@ -130,7 +117,7 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
         new_mid = cb.message.message_id
         start_menu_timeout(cb.bot, cb.message, state)
     except exceptions.TelegramBadRequest:
-        # fallback extremo: cria nova mensagem
+        # fallback muito raro
         msg = await cb.message.answer(
             title,
             reply_markup=builder(),
@@ -138,6 +125,21 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
         )
         new_mid = msg.message_id
         start_menu_timeout(cb.bot, msg, state)
+
+    # ─── 2) lança task p/ limpar selectors antigos (fora do caminho) ───
+    async def _cleanup_old(ids: List[int]):
+        await asyncio.sleep(0.05)          # ligeiro atraso para suavizar
+        for mid in ids:
+            if mid == new_mid:
+                continue
+            with suppress(exceptions.TelegramBadRequest):
+                await cb.bot.edit_message_text(
+                    chat_id   = cb.message.chat.id,
+                    message_id= mid,
+                    text      = "\u200b",
+                    reply_markup=None,
+                )
+    asyncio.create_task(_cleanup_old(menu_ids))
 
     # ─── 3) actualizar FSM ───
     await state.clear()
