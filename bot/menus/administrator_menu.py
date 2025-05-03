@@ -18,11 +18,11 @@ def build_menu() -> InlineKeyboardMarkup:
 def build_user_type_kbd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Paciente",        callback_data="role:patient")],
-            [InlineKeyboardButton(text="Cuidador",        callback_data="role:caregiver")],
-            [InlineKeyboardButton(text="Fisioterapeuta",  callback_data="role:physiotherapist")],
-            [InlineKeyboardButton(text="Contabilista",    callback_data="role:accountant")],
-            [InlineKeyboardButton(text="Administrador",   callback_data="role:administrator")],
+            [InlineKeyboardButton(text="🩹 Paciente",        callback_data="role:patient")],
+            [InlineKeyboardButton(text="🫱🏼‍🫲🏽 Cuidador",        callback_data="role:caregiver")],
+            [InlineKeyboardButton(text="👩🏼‍⚕️ Fisioterapeuta",  callback_data="role:physiotherapist")],
+            [InlineKeyboardButton(text="📊 Contabilista",    callback_data="role:accountant")],
+            [InlineKeyboardButton(text="👨🏼‍💻 Administrador",   callback_data="role:administrator")],
             [back_button()],   # ← linha própria, sem parênteses a mais
         ]
     )
