@@ -24,11 +24,11 @@ from bot.states.admin_menu_states  import AdminMenuStates
 router = Router(name="role_choice")
 
 _LABELS_PT = {
-    "patient":         "🧑🏼‍🦯 Paciente",
-    "caregiver":       "🤝🏼 Cuidador",
+    "patient":         "🩹 Paciente",
+    "caregiver":       "🫱🏼‍🫲🏽 Cuidador",
     "physiotherapist": "👩🏼‍⚕️ Fisioterapeuta",
     "accountant":      "📊 Contabilista",
-    "administrator":   "👨🏼‍💼 Administrador",
+    "administrator":   "👨🏼‍💻 Administrador",
 }
 def _label(role: str) -> str:
     return _LABELS_PT.get(role.lower(), role.capitalize())
@@ -56,7 +56,7 @@ async def ask_role(
         # Tenta editar selector anterior ao invés de enviar um novo
         try:
             msg = await bot.edit_message_text(
-                "🔰 *Escolha o perfil:*",
+                "🎭 *Escolha o perfil:*",
                 chat_id=prev_chat_id,
                 message_id=prev_msg_id,
                 reply_markup=kbd,
@@ -74,14 +74,14 @@ async def ask_role(
                     await bot.delete_message(prev_chat_id or chat_id, mid)
             msg = await bot.send_message(
                 chat_id,
-                "🔰 *Escolha o perfil:*",
+                "🎭 *Escolha o perfil:*",
                 reply_markup=kbd,
                 parse_mode="Markdown",
             )
     else:
         msg = await bot.send_message(
             chat_id,
-            "🔰 *Escolha o perfil:*",
+            "🎭 *Escolha o perfil:*",
             reply_markup=kbd,
             parse_mode="Markdown",
         )
