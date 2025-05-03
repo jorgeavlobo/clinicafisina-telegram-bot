@@ -2,15 +2,11 @@
 """
 Selector de perfil quando o utilizador tem ≥ 2 papéis.
 
-• Mostra inline-keyboard (timeout em bot/menus/common.py)
-• Guarda *todos* os IDs de selectors abertos
-• Escolha do perfil:
-      1) edita IMEDIATAMENTE o selector clicado → vira menu principal
-      2) faz limpeza dos selectors antigos em background (sem flicker)
+• Mostra inline-keyboard (timeout genérico em bot/menus/common.py)
+• Ao escolher: apaga o selector e mostra o menu principal do perfil
 """
 
 from __future__ import annotations
-import asyncio
 from contextlib import suppress
 from typing import Iterable, List
 
@@ -19,23 +15,9 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
 from bot.menus.common              import start_menu_timeout
+from bot.menus                     import show_menu          # ⬅️ novo import
 from bot.states.menu_states        import MenuStates
 from bot.states.admin_menu_states  import AdminMenuStates
-
-# ─── builders de cada perfil ───
-from bot.menus.patient_menu         import build_menu as _patient
-from bot.menus.caregiver_menu       import build_menu as _caregiver
-from bot.menus.physiotherapist_menu import build_menu as _physio
-from bot.menus.accountant_menu      import build_menu as _accountant
-from bot.menus.administrator_menu   import build_menu as _admin
-
-_ROLE_MENU = {
-    "patient":         _patient,
-    "caregiver":       _caregiver,
-    "physiotherapist": _physio,
-    "accountant":      _accountant,
-    "administrator":   _admin,
-}
 
 router = Router(name="role_choice")
 
@@ -71,21 +53,16 @@ async def ask_role(
         reply_markup=kbd,
     )
 
-    data = await state.get_data()
-    menu_ids: List[int] = data.get("menu_ids", [])
-    menu_ids.append(msg.message_id)
-
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
         roles=[r.lower() for r in roles],
-        menu_ids=menu_ids,
         menu_msg_id=msg.message_id,
         menu_chat_id=msg.chat.id,
     )
 
     start_menu_timeout(bot, msg, state)
 
-# ════════════════════════ choose_role ═══════════════════════
+# ═══════════════════════ choose_role ═══════════════════════
 @router.callback_query(
     StateFilter(MenuStates.WAIT_ROLE_CHOICE),
     F.data.startswith("role:"),
@@ -94,60 +71,18 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     role   = cb.data.split(":", 1)[1].lower()
     data   = await state.get_data()
     roles  = data.get("roles", [])
-    menu_ids: List[int] = data.get("menu_ids", [])
 
     if role not in roles:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
-    # ─── 1) EDITA o selector clicado → menu principal ───
-    builder = _ROLE_MENU.get(role)
-    title   = (
-        "💻 *Menu administrador:*"
-        if role == "administrator"
-        else f"👤 *{role.title()}* – menu principal"
-    )
+    # ─── remove o selector (título + botões) ───
+    with suppress(exceptions.TelegramBadRequest):
+        await cb.message.delete()
 
-    try:
-        await cb.message.edit_text(
-            title,
-            reply_markup=builder(),
-            parse_mode="Markdown",
-        )
-        new_mid = cb.message.message_id
-        start_menu_timeout(cb.bot, cb.message, state)
-    except exceptions.TelegramBadRequest:
-        # fallback muito raro
-        msg = await cb.message.answer(
-            title,
-            reply_markup=builder(),
-            parse_mode="Markdown",
-        )
-        new_mid = msg.message_id
-        start_menu_timeout(cb.bot, msg, state)
-
-    # ─── 2) lança task p/ limpar selectors antigos (fora do caminho) ───
-    async def _cleanup_old(ids: List[int]):
-        await asyncio.sleep(0.05)          # ligeiro atraso para suavizar
-        for mid in ids:
-            if mid == new_mid:
-                continue
-            with suppress(exceptions.TelegramBadRequest):
-                await cb.bot.edit_message_text(
-                    chat_id   = cb.message.chat.id,
-                    message_id= mid,
-                    text      = "\u200b",
-                    reply_markup=None,
-                )
-    asyncio.create_task(_cleanup_old(menu_ids))
-
-    # ─── 3) actualizar FSM ───
-    await state.clear()
-    await state.update_data(
-        active_role = role,
-        menu_msg_id = new_mid,
-        menu_chat_id= cb.message.chat.id,
-    )
+    # ─── actualiza FSM & perfil activo ───
+    await state.clear()                       # limpa dados temporários
+    await state.update_data(active_role=role)
 
     if role == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
@@ -155,3 +90,7 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
         await state.set_state(None)
 
     await cb.answer(f"Perfil {_label(role)} seleccionado!")
+
+    # ─── mostra o menu principal do novo perfil ───
+    #     show_menu() já regista o novo menu e reinicia o timeout
+    await show_menu(cb.bot, cb.from_user.id, state, [role])
