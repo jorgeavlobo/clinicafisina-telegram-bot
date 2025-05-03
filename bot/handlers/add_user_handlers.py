@@ -9,7 +9,7 @@ from aiogram import Router, F, types, exceptions
 from aiogram.fsm.context import FSMContext
 
 from bot.states.add_user_flow import AddUserFlow
-from bot.menus.common import cancel_back_kbd
+from bot.menus.ui_helpers import cancel_back_kbd
 from bot.menus.administrator_menu import build_user_type_kbd
 from bot.utils.validators import (
     normalize_phone_cc,
