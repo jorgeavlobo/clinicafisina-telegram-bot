@@ -6,7 +6,7 @@ Constrói e gere os menus de cada perfil.
   delega no selector ask_role().
 • Mantém «active_role» mesmo após limpezas de FSM (clear_keep_role).
 • A renderização/actualização do menu é feita via ui_helpers.edit_menu()
-  (sem repetição de lógica de fallback).
+  (sem repetir lógica de fallback).
 • Cada envio reinicia o timeout de inactividade (MENU_TIMEOUT).
 """
 
@@ -36,6 +36,16 @@ from .administrator_menu   import build_menu as _admin
 
 log = logging.getLogger(__name__)
 
+# ─────────── títulos fixos por perfil (Markdown formatting) ────────────
+_ROLE_TITLE = {
+    "patient":         "🩹 *Paciente:*",
+    "caregiver":       "🫱🏼‍🫲🏽 *Cuidador*",
+    "physiotherapist": "👩🏼‍⚕️ *Fisioterapeuta:*",
+    "accountant":      "📊 *Contabilista:*",
+    "administrator":   "👨🏼‍💻 *Administrator:*",
+}
+
+# builder (InlineKeyboardMarkup) por perfil
 _ROLE_MENU = {
     "patient":         _patient,
     "caregiver":       _caregiver,
@@ -52,7 +62,13 @@ async def show_menu(
     roles: List[str],
     requested: str | None = None,
 ) -> None:
-    """Create or update the main menu for the active profile."""
+    """
+    Create (or update) the main menu for the current profile.
+
+    The heavy lifting of message editing / deletion / creation is delegated
+    to ui_helpers.edit_menu(), keeping this orchestrator focused on
+    deciding *what* to show, not *how* to render.
+    """
     # 0) no valid roles
     if not roles:
         await bot.send_message(
@@ -87,11 +103,7 @@ async def show_menu(
         return
 
     # 4) title & previous message-id
-    title = (
-        "💻 *Menu administrador:*"
-        if active == "administrator"
-        else f"👤 *{active.title()}* – menu principal"
-    )
+    title = _ROLE_TITLE.get(active, f"👤 *{active.title()}* – menu principal")
     prev_msg_id  = data.get("menu_msg_id")
     prev_chat_id = data.get("menu_chat_id")
     menu_ids: List[int] = data.get("menu_ids", [])
