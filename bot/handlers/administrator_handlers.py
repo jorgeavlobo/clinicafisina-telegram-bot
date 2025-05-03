@@ -82,7 +82,7 @@ async def _close_menu(cb: types.CallbackQuery, state: FSMContext, confirmation: 
 
 async def _main(cb: types.CallbackQuery, state: FSMContext):
     await state.set_state(AdminMenuStates.MAIN)
-    await _replace_menu(cb, state, "💻 *Menu:*", _main_menu_kbd())
+    await _replace_menu(cb, state, "👨🏼‍💻 *Menu:*", _main_menu_kbd())
 
 async def _agenda(cb: types.CallbackQuery, state: FSMContext):
     await state.set_state(AdminMenuStates.AGENDA)
