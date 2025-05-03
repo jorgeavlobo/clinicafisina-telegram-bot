@@ -30,11 +30,11 @@ from bot.menus.administrator_menu   import build_menu as _admin
 router = Router(name="role_choice")
 
 _LABELS_PT = {
-    "patient":         "🧑🏼‍🦯 Paciente",
-    "caregiver":       "🤝🏼 Cuidador",
-    "physiotherapist": "👩🏼‍⚕️ Fisioterapeuta",
-    "accountant":      "📊 Contabilista",
-    "administrator":   "👨🏼‍💼 Administrador",
+    "patient":         "paciente",
+    "caregiver":       "cuidador",
+    "physiotherapist": "fisioterapeuta",
+    "accountant":      "contabilista",
+    "administrator":   "administrador",
 }
 def _label(role: str) -> str:
     return _LABELS_PT.get(role.lower(), role.capitalize())
@@ -95,7 +95,7 @@ async def ask_role(
             )
         ] for r in roles]
     )
-    msg = await bot.send_message(chat_id, "🔰 Escolha o perfil:", reply_markup=kbd)
+    msg = await bot.send_message(chat_id, "escolhe", reply_markup=kbd)
 
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
