@@ -100,11 +100,10 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     try:
         await cb.bot.edit_message_text(
             title,
-            chat_id   = cb.message.chat.id,
-            message_id= cb.message.message_id,
+            chat_id=cb.message.chat.id,
+            message_id=cb.message.message_id,
             reply_markup=builder(),
         )
-
         await state.update_data(
             menu_msg_id=cb.message.message_id,
             menu_chat_id=cb.message.chat.id,
@@ -112,8 +111,13 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
         )
         start_menu_timeout(cb.bot, cb.message, state)
 
-    except exceptions.TelegramBadRequest:
-        # edição falhou? remove bolha e usa fluxo antigo
-        with suppress(exceptions.TelegramBadRequest):
-            await cb.message.delete()
-        await show_menu(cb.bot, cb.from_user.id, state, [role])
+    except exceptions.TelegramBadRequest as e:
+        # Mostra o erro real ao utilizador (apenas para debug)
+        await cb.answer(
+            f"❗ Telegram não deixou editar:\n{e}", show_alert=True
+        )
+        # Comentado para não criar nova mensagem durante o teste
+        # with suppress(exceptions.TelegramBadRequest):
+        #     await cb.message.delete()
+        # await show_menu(cb.bot, cb.from_user.id, state, [role])
+        return
