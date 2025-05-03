@@ -43,7 +43,7 @@ def back_button() -> InlineKeyboardButton:
 def cancel_back_kbd() -> ReplyKeyboardMarkup:
     """Reply-keyboard with *Cancel* / *Back* options (used in add-user flow)."""
     return ReplyKeyboardMarkup(
-        keyboard=[[  # one row – two buttons
+        keyboard=[[
             KeyboardButton(text="↩️ Regressar à opção anterior"),
             KeyboardButton(text="❌ Cancelar processo de adição"),
         ]],
@@ -60,46 +60,32 @@ async def _hide_menu_after(
     menu_timeout: int,
     message_timeout: int,
 ) -> None:
-    """
-    Wait *menu_timeout* seconds and then try to remove the menu.
-
-    • If deletion succeeds → nothing else to do.
-    • If it fails (e.g. user already scrolled up) → strip the message text
-      and inline-keyboard to a single ZERO-WIDTH SPACE so the chat history
-      looks cleaner and users cannot press dead buttons.
-    • Finally, wipe menu-related FSM fields but keep the active role,
-      and optionally show a short warning that auto-hiding happened.
-    """
+    """Background task that auto-hides an inactive menu."""
     try:
         await asyncio.sleep(menu_timeout)
 
         data = await state.get_data()
         if data.get("menu_msg_id") != msg_id:
-            # A newer menu exists – abort silently.
-            return
+            return                                      # newer menu exists
 
-        # 1) Try hard-delete
+        # 1) hard-delete if possible
         deleted = False
         try:
-            await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            await bot.delete_message(chat_id, msg_id)
             deleted = True
         except exceptions.TelegramBadRequest:
             deleted = False
 
-        # 2) Fallback: blank the message
+        # 2) else blank message
         if not deleted:
             with suppress(exceptions.TelegramBadRequest):
                 await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=msg_id,
-                    text="\u200B",  # ZERO-WIDTH SPACE
-                    reply_markup=None,
+                    chat_id, msg_id, "\u200B", reply_markup=None
                 )
 
-        # 3) Clear menu-related state but keep active_role intact
+        # 3) purge state but keep active_role
         await clear_keep_role(state)
 
-        # – Remove this ID from the historical list, if stored
         menu_ids: List[int] = data.get("menu_ids", [])
         if msg_id in menu_ids:
             menu_ids.remove(msg_id)
@@ -110,7 +96,7 @@ async def _hide_menu_after(
             menu_ids=menu_ids,
         )
 
-        # 4) Optional toast-style warning message
+        # 4) toast notice
         warn: Optional[Message] = None
         with suppress(exceptions.TelegramBadRequest):
             warn = await bot.send_message(
@@ -122,10 +108,8 @@ async def _hide_menu_after(
             await asyncio.sleep(message_timeout)
             with suppress(exceptions.TelegramBadRequest):
                 await warn.delete()
-
     except Exception:
-        # Never let a background Task explode
-        pass
+        pass                                            # never explode
 
 
 def start_menu_timeout(
@@ -135,12 +119,7 @@ def start_menu_timeout(
     menu_timeout: int = MENU_TIMEOUT,
     message_timeout: int = MESSAGE_TIMEOUT,
 ) -> None:
-    """
-    Start (or restart) the inactivity timer for a menu message.
-
-    ⚠️ The asyncio.Task is *not* stored inside the FSM to avoid
-       serialization issues in the chosen storage backend.
-    """
+    """Launch the auto-hide coroutine for a given menu message."""
     asyncio.create_task(
         _hide_menu_after(
             bot,
@@ -164,32 +143,18 @@ async def replace_or_create_menu(
     parse_mode: str = "Markdown",
 ) -> Message:
     """
-    Reuse the current menu message (edit it) when possible, otherwise send a
-    fresh one. In both cases, persist the visible message ID inside the FSM.
+    Edit the current menu message when possible; otherwise send a new one.
 
-    This utility removes the perceptible “jump” when transitioning between
-    menus because Telegram only performs an *edit* (no animation) instead of
-    a delete-and-send cycle.
-
-    Parameters
-    ----------
-    bot : Bot
-        The aiogram Bot instance.
-    state : FSMContext
-        The user/session FSM context for keeping track of the menu.
-    chat_id : int
-        Where the menu should appear (usually `cb.message.chat.id`).
-    message : Message | None
-        The message to be edited. Pass `None` to force creation of a new one.
-    text : str
-        New caption/text of the menu.
-    kbd : InlineKeyboardMarkup
-        Inline-keyboard to attach.
-    parse_mode : str, default "Markdown"
-        How Telegram should parse *text*.
+    A second (silent) edit attempt is made **without** parse_mode if the first
+    fails with a Markdown/HTML parse error – this avoids falling back to a
+    brand-new message (and therefore avoids the visual jump) when the only
+    problem is bad markup.
     """
-    try:
-        if message:  # Try editing first – smoother UX
+    visible_msg: Message | None = None
+
+    # First try – as requested
+    if message:
+        try:
             await bot.edit_message_text(
                 text=text,
                 chat_id=chat_id,
@@ -197,13 +162,28 @@ async def replace_or_create_menu(
                 reply_markup=kbd,
                 parse_mode=parse_mode,
             )
-            visible_msg = message
-        else:
-            raise exceptions.TelegramBadRequest  # Jump to except: create new
-    except exceptions.TelegramBadRequest:
-        # Either no original message, or editing failed (e.g., >4096 chars)
+            visible_msg = message            # success
+        except exceptions.TelegramBadRequest as e:
+            # Parse error? Try again without parse_mode
+            if "parse" in str(e).lower():
+                try:
+                    await bot.edit_message_text(
+                        text=text,
+                        chat_id=chat_id,
+                        message_id=message.message_id,
+                        reply_markup=kbd,
+                        parse_mode=None,
+                    )
+                    visible_msg = message
+                except exceptions.TelegramBadRequest:
+                    visible_msg = None       # will create new
+            else:
+                visible_msg = None           # any other 400 → create new
+
+    # If editing was impossible or message is None → create fresh menu
+    if visible_msg is None:
         visible_msg = await bot.send_message(
-            chat_id=chat_id,
+            chat_id,
             text=text,
             reply_markup=kbd,
             parse_mode=parse_mode,
