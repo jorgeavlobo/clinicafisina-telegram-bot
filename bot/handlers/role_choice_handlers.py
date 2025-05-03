@@ -66,7 +66,6 @@ async def ask_role(
 
 # —— choose_role ——————————————————————
 @router.callback_query(
-    StateFilter(MenuStates.WAIT_ROLE_CHOICE),
     lambda c: c.data and c.data.startswith("role:"),
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
