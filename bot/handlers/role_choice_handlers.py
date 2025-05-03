@@ -3,11 +3,13 @@
 Selector de perfil quando o utilizador tem ≥ 2 papéis.
 
 • Mostra inline-keyboard com os perfis
-• Na escolha, edita ESSA bolha para o primeiro menu do perfil
-  (mesma técnica usada pelo menu de administrador)
+• Responde ao callback de imediato (spinner some)
+• Edita a MESMA bolha para o primeiro menu do perfil escolhido
 """
 
 from __future__ import annotations
+
+from typing import Dict, Callable, List
 
 from aiogram import Router, types, F, exceptions
 from aiogram.filters import StateFilter
@@ -17,7 +19,6 @@ from bot.menus.common              import start_menu_timeout
 from bot.states.menu_states        import MenuStates
 from bot.states.admin_menu_states  import AdminMenuStates
 
-# builders (todos devolvem InlineKeyboardMarkup)
 from bot.menus.patient_menu         import build_menu as _patient
 from bot.menus.caregiver_menu       import build_menu as _caregiver
 from bot.menus.physiotherapist_menu import build_menu as _physio
@@ -36,7 +37,7 @@ _LABELS_PT = {
 def _label(role: str) -> str:
     return _LABELS_PT.get(role.lower(), role.capitalize())
 
-_ROLE_MENU = {
+_ROLE_MENU: Dict[str, Callable[[], types.InlineKeyboardMarkup]] = {
     "patient":         _patient,
     "caregiver":       _caregiver,
     "physiotherapist": _physio,
@@ -44,14 +45,14 @@ _ROLE_MENU = {
     "administrator":   _admin,
 }
 
-# ─────────────────────── ask_role ────────────────────────
+# ───────────────────── ask_role ─────────────────────
 async def ask_role(
     bot: types.Bot,
     chat_id: int,
     state: FSMContext,
-    roles: list[str],
+    roles: List[str],
 ) -> None:
-    """Envia o selector e regista apenas o seu ID."""
+    """Envia o selector e regista o seu ID no FSM."""
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[[
             types.InlineKeyboardButton(text=_label(r), callback_data=f"role:{r.lower()}")
@@ -69,13 +70,13 @@ async def ask_role(
     )
     start_menu_timeout(bot, msg, state)
 
-# ───────── util: editar ou recriar mensagem ─────────
+# ───────── util: editar ou recriar ─────────
 async def _edit_or_create(
     cb: types.CallbackQuery,
     text: str,
     kbd: types.InlineKeyboardMarkup,
 ) -> types.Message:
-    """Edita cb.message; se falhar, apaga-a e envia nova."""
+    """Edita cb.message; se falhar, envia nova."""
     try:
         await cb.message.edit_text(text, reply_markup=kbd, parse_mode="Markdown")
         return cb.message
@@ -83,17 +84,21 @@ async def _edit_or_create(
         await cb.message.delete()
         return await cb.message.answer(text, reply_markup=kbd, parse_mode="Markdown")
 
-# ─────────────────── callback «role:…» ───────────────────
+# ───────────────── callback «role:…» ────────────────
 @router.callback_query(
     StateFilter(MenuStates.WAIT_ROLE_CHOICE),
     F.data.startswith("role:"),
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     role = cb.data.split(":", 1)[1].lower()
-    if role not in (await state.get_data()).get("roles", []):
+    data = await state.get_data()
+    if role not in data.get("roles", []):
         return await cb.answer("Perfil inválido.", show_alert=True)
 
-    # actualiza FSM
+    # 1) encerra o spinner imediatamente
+    await cb.answer(cache_time=1)
+
+    # 2) actualiza FSM
     await state.clear()
     await state.update_data(active_role=role)
 
@@ -102,9 +107,10 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     else:
         await state.set_state(None)
 
+    # 3) constrói primeiro menu
     builder = _ROLE_MENU.get(role)
-    if not builder:
-        return await cb.answer("Menu não definido.", show_alert=True)
+    if builder is None:
+        return
 
     title = (
         "💻 *Menu administrador:*"
@@ -113,8 +119,6 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     )
     kbd = builder()
 
-    # edita bolha → menu; reinicia timeout
+    # 4) edita a bolha; reinicia timeout
     msg = await _edit_or_create(cb, title, kbd)
     start_menu_timeout(cb.bot, msg, state)
-
-    await cb.answer(f"Perfil {_label(role)} seleccionado!")
