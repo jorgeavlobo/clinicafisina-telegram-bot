@@ -5,25 +5,27 @@ Constrói e gere os menus de cada perfil.
 • Se o utilizador tiver vários perfis e ainda não escolheu um,
   delega no selector ask_role().
 • Mantém «active_role» mesmo após limpezas de FSM (clear_keep_role).
-• Ao abrir um menu novo substitui o menu anterior com `edit_message_text` (sem salto visual);
-  em caso de falha, apaga e volta a enviar (fallback).
-• Cada envio reinicia o timeout de inactividade (MENU_TIMEOUT em
-  bot/config.py).
+• A renderização/actualização do menu é feita via ui_helpers.edit_menu()
+  (sem repetição de lógica de fallback).
+• Cada envio reinicia o timeout de inactividade (MENU_TIMEOUT).
 """
 
 from __future__ import annotations
 
 import logging
-from contextlib import suppress
 from typing import List
 
-from aiogram import Bot, exceptions
+from aiogram import Bot
 from aiogram.types import ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
 
 from bot.states.admin_menu_states import AdminMenuStates
 from bot.utils.fsm_helpers        import clear_keep_role
-from bot.menus.ui_helpers         import start_menu_timeout
+from bot.menus.ui_helpers         import (
+    start_menu_timeout,
+    edit_menu,
+    delete_messages,
+)
 
 # builders de cada perfil
 from .patient_menu         import build_menu as _patient
@@ -42,24 +44,6 @@ _ROLE_MENU = {
     "administrator":   _admin,
 }
 
-# ───────────────────────── helpers ─────────────────────────
-async def _purge_all_menus(bot: Bot, state: FSMContext) -> None:
-    """
-    Apaga **todos** os menus cujo ID esteja registado em `menu_ids`
-    (lista guardada no FSM). Essa lista é actualizada no final de
-    show_menu() para conter só o menu acabado de abrir.
-    """
-    data      = await state.get_data()
-    chat_id   = data.get("menu_chat_id")        # mesmo chat p/ todos
-    menu_ids: List[int] = data.get("menu_ids", [])
-
-    if not chat_id or not menu_ids:
-        return
-
-    for mid in menu_ids:
-        with suppress(exceptions.TelegramBadRequest):
-            await bot.delete_message(chat_id, mid)
-
 # ───────────────────────── API pública ─────────────────────────
 async def show_menu(
     bot: Bot,
@@ -68,7 +52,8 @@ async def show_menu(
     roles: List[str],
     requested: str | None = None,
 ) -> None:
-    # 0) sem papéis válidos
+    """Create or update the main menu for the active profile."""
+    # 0) no valid roles
     if not roles:
         await bot.send_message(
             chat_id,
@@ -79,20 +64,20 @@ async def show_menu(
         await clear_keep_role(state)
         return
 
-    # 1) determina o papel activo
+    # 1) determine active role
     data   = await state.get_data()
     active = requested or data.get("active_role")
     if active is None:
         if len(roles) > 1:
-            from bot.handlers.role_choice_handlers import ask_role   # evitar ciclo
+            from bot.handlers.role_choice_handlers import ask_role
             await ask_role(bot, chat_id, state, roles)
             return
         active = roles[0]
 
-    # 2) guarda escolha
+    # 2) persist active_role
     await state.update_data(active_role=active)
 
-    # 3) builder do menu
+    # 3) get menu builder
     builder = _ROLE_MENU.get(active)
     if builder is None:
         await bot.send_message(
@@ -101,60 +86,45 @@ async def show_menu(
         )
         return
 
-    # 4) substitui o menu anterior ou envia um novo
+    # 4) title & previous message-id
     title = (
         "💻 *Menu administrador:*"
         if active == "administrator"
         else f"👤 *{active.title()}* – menu principal"
     )
-    prev_msg_id = data.get("menu_msg_id")
+    prev_msg_id  = data.get("menu_msg_id")
     prev_chat_id = data.get("menu_chat_id")
-    msg = None
-    if prev_msg_id and prev_chat_id:
-        # Tenta editar a mensagem anterior
-        try:
-            msg = await bot.edit_message_text(
-                title,
-                chat_id=prev_chat_id,
-                message_id=prev_msg_id,
-                reply_markup=builder(),
-                parse_mode="Markdown",
-            )
-            # Remove outros menus antigos (se existirem)
-            menu_ids: List[int] = data.get("menu_ids", [])
-            for mid in menu_ids:
-                if mid != prev_msg_id:
-                    with suppress(exceptions.TelegramBadRequest):
-                        await bot.delete_message(prev_chat_id, mid)
-        except exceptions.TelegramBadRequest:
-            # Falhou editar, faz envio normal (fallback)
-            await _purge_all_menus(bot, state)
-            msg = await bot.send_message(
-                chat_id,
-                title,
-                reply_markup=builder(),
-                parse_mode="Markdown",
-            )
-    else:
-        msg = await bot.send_message(
-            chat_id,
-            title,
-            reply_markup=builder(),
-            parse_mode="Markdown",
-        )
+    menu_ids: List[int] = data.get("menu_ids", [])
 
-    # 5) regista **só** o menu actual
+    # 4.a) choose target message for editing (same chat only)
+    target_msg_id = prev_msg_id if prev_chat_id == chat_id else None
+
+    # 4.b) render (edit ↦ delete ↦ ZW ↦ new) using ui_helpers.edit_menu()
+    msg = await edit_menu(
+        bot=bot,
+        chat_id=chat_id,
+        message_id=target_msg_id,
+        text=title,
+        keyboard=builder(),
+    )
+
+    # 4.c) purge obsolete menus (IDs ≠ actual menu)
+    obsolete = [mid for mid in menu_ids if mid != msg.message_id]
+    if obsolete:
+        await delete_messages(bot, chat_id, obsolete, soft=False)
+
+    # 5) register current menu ID
     await state.update_data(
         menu_msg_id = msg.message_id,
         menu_chat_id = chat_id,
-        menu_ids     = [msg.message_id],        # lista reiniciada
+        menu_ids     = [msg.message_id],
     )
 
-    # 6) estado FSM base
+    # 6) set base FSM state
     if active == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
     else:
-        await state.set_state(None)   # manter FSM “limpa”
+        await state.set_state(None)
 
-    # 7) (re)inicia timeout automático
+    # 7) (re)start inactivity timeout
     start_menu_timeout(bot, msg, state)
