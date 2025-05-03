@@ -3,11 +3,11 @@
 Selector de perfil quando o utilizador tem ≥ 2 papéis.
 
 • Mostra inline-keyboard (timeout genérico em bot/menus/common.py)
-• Guarda TODOS os IDs de selectors abertos
+• Guarda *todos* os IDs de selectors abertos
 • Quando o utilizador escolhe:
       – “esvazia” selectors antigos
-      – EDITA o selector clicado → transforma-o no menu principal
-        (zero flicker, tal como nos menus de administrador)
+      – EDITA o selector clicado → converte-o no menu principal
+        (transição imperceptível; se falhar há fallback)
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from bot.menus.common              import start_menu_timeout
 from bot.states.menu_states        import MenuStates
 from bot.states.admin_menu_states  import AdminMenuStates
 
-# ───── builders de cada perfil (mesmo mapeamento de bot/menus/__init__.py) ─────
+# ─── builders de cada perfil ───
 from bot.menus.patient_menu         import build_menu as _patient
 from bot.menus.caregiver_menu       import build_menu as _caregiver
 from bot.menus.physiotherapist_menu import build_menu as _physio
@@ -78,8 +78,8 @@ async def ask_role(
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
         roles=[r.lower() for r in roles],
-        menu_ids=menu_ids,
-        menu_msg_id=msg.message_id,
+        menu_ids=menu_ids,            # todos os selectors abertos
+        menu_msg_id=msg.message_id,   # último aberto
         menu_chat_id=msg.chat.id,
     )
 
@@ -108,11 +108,11 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
             await cb.bot.edit_message_text(
                 chat_id   = cb.message.chat.id,
                 message_id= mid,
-                text      = "\u200b",
+                text      = "\u200b",       # ZERO-WIDTH SPACE
                 reply_markup=None,
             )
 
-    # ─── 2) EDITA a mensagem clicada → converte em menu principal ───
+    # ─── 2) converte o selector clicado em MENU PRINCIPAL ───
     builder = _ROLE_MENU.get(role)
     title   = (
         "💻 *Menu administrador:*"
@@ -121,29 +121,31 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     )
 
     try:
+        # edição in-place  → transição suave
         await cb.message.edit_text(
             title,
             reply_markup=builder(),
             parse_mode="Markdown",
         )
+        new_mid = cb.message.message_id
+        start_menu_timeout(cb.bot, cb.message, state)
     except exceptions.TelegramBadRequest:
-        # Como fallback extremo (pouco provável) envia nova mensagem
+        # fallback extremo: cria nova mensagem
         msg = await cb.message.answer(
             title,
             reply_markup=builder(),
             parse_mode="Markdown",
         )
-        await state.update_data(menu_msg_id=msg.message_id,
-                                menu_chat_id=msg.chat.id)
+        new_mid = msg.message_id
         start_menu_timeout(cb.bot, msg, state)
-    else:
-        await state.update_data(menu_msg_id=cb.message.message_id,
-                                menu_chat_id=cb.message.chat.id)
-        start_menu_timeout(cb.bot, cb.message, state)
 
-    # ─── 3) actualiza FSM para o novo perfil ───
+    # ─── 3) actualizar FSM ───
     await state.clear()
-    await state.update_data(active_role=role)
+    await state.update_data(
+        active_role = role,
+        menu_msg_id = new_mid,
+        menu_chat_id= cb.message.chat.id,
+    )
 
     if role == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
