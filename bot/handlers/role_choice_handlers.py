@@ -99,34 +99,25 @@ async def ask_role(
     StateFilter(MenuStates.WAIT_ROLE_CHOICE),
     F.data.startswith("role:"),
 )
-async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
-    """Processa a escolha do papel e edita a mensagem com o menu correspondente."""
+async def choose_role(cb: types.CallbackQuery, state: FSMContext):
     role = cb.data.split(":", 1)[1].lower()  # Extrai o papel selecionado
-    data = await state.get_data()
-    roles = data.get("roles", [])
-
-    # Verifica se o papel é válido
-    if role not in roles:
-        await cb.answer("Perfil inválido.", show_alert=True)
-        return
-
-    # Armazena o papel ativo no estado
-    await state.update_data(active_role=role)
-
-    # Define o estado com base no papel
+    await state.update_data(active_role=role)  # Atualiza o estado com o papel
+    
+    # Define o estado consoante o papel
     if role == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
     else:
         await state.set_state(None)
-
-    # Edita a mensagem existente com o menu específico do papel
+    
+    # Chama show_menu com os IDs para editar a mensagem existente
     await show_menu(
         cb.bot,
         cb.from_user.id,
         state,
         [role],
-        edit_message_id=cb.message.message_id,
-        edit_chat_id=cb.message.chat.id,
+        edit_message_id=cb.message.message_id,  # ID da mensagem atual
+        edit_chat_id=cb.message.chat.id,        # ID do chat atual
     )
+    await cb.answer(f"Perfil {role} selecionado!")
 
     await cb.answer(f"Perfil {_label(role)} seleccionado!")
