@@ -20,6 +20,11 @@ from bot.config                    import MESSAGE_TIMEOUT
 from bot.states.menu_states        import MenuStates
 from bot.states.admin_menu_states  import AdminMenuStates
 
+import logging, os
+log = logging.getLogger(__name__)
+print("### ROLE_HANDLER_VERSION = 2025-05-03-B ###")   # ← ficará sempre no log
+log.warning("### ROLE_HANDLER_VERSION = 2025-05-03-B ###")
+
 router = Router(name="role_choice")
 log = logging.getLogger(__name__)                      # temporary debug
 
