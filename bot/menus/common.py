@@ -134,3 +134,30 @@ def start_menu_timeout(
             message_timeout,
         )
     )
+
+def md2(text: str) -> str:
+    """
+    Escapes the special characters required by MarkdownV2.
+    https://core.telegram.org/bots/api#markdownv2-style
+    """
+    return (
+        text.replace('\\',  '\\\\')
+            .replace('_',   '\\_')
+            .replace('*',   '\\*')
+            .replace('[',   '\\[')
+            .replace(']',   '\\]')
+            .replace('(',   '\\(')
+            .replace(')',   '\\)')
+            .replace('~',   '\\~')
+            .replace('`',   '\\`')
+            .replace('>',   '\\>')
+            .replace('#',   '\\#')
+            .replace('+',   '\\+')
+            .replace('-',   '\\-')
+            .replace('=',   '\\=')
+            .replace('|',   '\\|')
+            .replace('{',   '\\{')
+            .replace('}',   '\\}')
+            .replace('.',   '\\.')
+            .replace('!',   '\\!')
+    )
