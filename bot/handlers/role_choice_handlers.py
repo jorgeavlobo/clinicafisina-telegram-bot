@@ -56,25 +56,29 @@ async def ask_role(bot: types.Bot, chat_id: int, state: FSMContext,
     lambda c: c.data and c.data.startswith("role:")
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
-    role = cb.data.split(":", 1)[1].lower()
-    data = await state.get_data()
+    # 0️⃣ dar feedback imediatamente (pára o “loading…”)
+    await cb.answer()
+
+    role  = cb.data.split(":", 1)[1].lower()
+    data  = await state.get_data()
     roles = data.get("roles", [])
 
     if role not in roles:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
-    selector_id   = data.get("menu_msg_id")
-    selector_chat = data.get("menu_chat_id")
+    # 1️⃣ ocultar a mensagem-selector *já* (delete ou blank)
+    try:
+        # tenta apagar; se não der, limpa reply-markup e texto
+        await cb.message.delete()
+    except exceptions.TelegramBadRequest:
+        try:
+            await cb.message.edit_reply_markup(reply_markup=None)
+            await cb.message.edit_text("\u200B")          # ZERO WIDTH SPACE
+        except exceptions.TelegramBadRequest:
+            pass
 
-    # 1) hide the selector right away
-    if selector_id and selector_chat:
-        await hide_menu_now(
-            cb.bot, selector_chat, selector_id,
-            state, message_timeout=MESSAGE_TIMEOUT,
-        )
-
-    # 2) switch profile
+    # 2️⃣ prosseguir com a troca de perfil -----------------
     await state.clear()
     await state.update_data(active_role=role, roles=roles)
 
