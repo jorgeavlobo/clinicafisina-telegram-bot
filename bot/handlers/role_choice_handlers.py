@@ -118,6 +118,4 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext):
         edit_message_id=cb.message.message_id,  # ID da mensagem atual
         edit_chat_id=cb.message.chat.id,        # ID do chat atual
     )
-    await cb.answer(f"Perfil {role} selecionado!")
-
     await cb.answer(f"Perfil {_label(role)} seleccionado!")
