@@ -2,13 +2,16 @@
 """
 Selector de perfil quando o utilizador tem ≥ 2 papéis.
 
-• Mostra inline-keyboard (timeout generico em bot/menus/common.py)
-• Guarda TODOS os IDs de selectors abertos
-• Quando o utilizador escolhe, remove todas as cópias que possam existir
+• Mostra inline-keyboard (timeout genérico em bot/menus/common.py)
+• Acumula TODOS os IDs dos selectors abertos
+• Quando o utilizador escolhe:
+      1) esconde cada selector (texto invisível + remove teclado)
+      2) tenta apagar a mensagem (se possível)
 """
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import suppress
 from typing import Iterable
 
@@ -41,7 +44,6 @@ async def ask_role(
     state: FSMContext,
     roles: Iterable[str],
 ) -> None:
-    """Envia o selector de perfis e regista TODAS as mensagens enviadas."""
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[[
             types.InlineKeyboardButton(text=_label(r), callback_data=f"role:{r.lower()}")
@@ -56,24 +58,24 @@ async def ask_role(
     )
 
     data = await state.get_data()
-    menu_ids: list[int] = data.get("menu_ids", [])        # ← acumular IDs
+    menu_ids: list[int] = data.get("menu_ids", [])
     menu_ids.append(msg.message_id)
 
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
         roles=[r.lower() for r in roles],
-        menu_ids=menu_ids,            # lista completa
-        menu_msg_id=msg.message_id,   # último aberto
+        menu_ids=menu_ids,             # todos os selectors abertos
+        menu_msg_id=msg.message_id,    # último aberto
         menu_chat_id=msg.chat.id,
     )
 
-    start_menu_timeout(bot, msg, state)                   # timeout genérico
+    start_menu_timeout(bot, msg, state)
 
 
 # ─────────────────── callback «role:…» ────────────────────
 @router.callback_query(
     StateFilter(MenuStates.WAIT_ROLE_CHOICE),
-    F.data.startswith("role:"),
+    F.data.startswith("role:")
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     role   = cb.data.split(":", 1)[1].lower()
@@ -85,21 +87,27 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
-    # ─── remover TODOS os selectors que possam existir ───
+    # ─── 1. Esconder todos os selectors (texto invisível + remove teclado) ───
     for mid in menu_ids:
-        with suppress(exceptions.TelegramBadRequest):
-            await cb.bot.delete_message(cb.message.chat.id, mid)
         with suppress(exceptions.TelegramBadRequest):
             await cb.bot.edit_message_text(
                 chat_id=cb.message.chat.id,
                 message_id=mid,
-                text="\u200b",
+                text="\u200b",          # ZERO-WIDTH SPACE
                 reply_markup=None,
             )
 
-    # ─── prossegue com a troca de perfil ───
+    # (pequena pausa para evitar “message is not modified” em deleção imediata)
+    await asyncio.sleep(0.1)
+
+    # ─── 2. Tentar apagar as mensagens agora “vazias” ───
+    for mid in menu_ids:
+        with suppress(exceptions.TelegramBadRequest):
+            await cb.bot.delete_message(cb.message.chat.id, mid)
+
+    # ─── troca de perfil ───
     await state.clear()
-    await state.update_data(active_role=role)   # já não precisamos de roles/menu_ids
+    await state.update_data(active_role=role)
 
     if role == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
