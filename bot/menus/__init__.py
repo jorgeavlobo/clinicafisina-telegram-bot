@@ -70,11 +70,31 @@ async def show_menu(
     edit_message_id: int = None,
     edit_chat_id: int = None,
 ) -> None:
-    # Lógica para construir o menu (título e teclado)
-    title = "Menu de Administrador"  # Exemplo, ajustar conforme necessário
-    reply_markup = build_admin_menu()  # Função fictícia, ajustar ao teu caso
+    # Determina o papel ativo
+    data = await state.get_data()
+    active_role = requested or data.get("active_role")
     
-    # Se forem fornecidos IDs para edição, tenta editar a mensagem
+    if active_role is None:
+        if len(roles) == 1:
+            active_role = roles[0]
+        else:
+            # Se houver múltiplos papéis e nenhum ativo, pede ao usuário para escolher
+            await bot.send_message(chat_id, "Por favor, selecione um papel.")
+            return
+
+    # Obtém a função de construção de menu para o papel ativo
+    builder = _ROLE_MENU.get(active_role)
+    if builder is None:
+        await bot.send_message(chat_id, f"Menu para o papel '{active_role}' não está disponível.")
+        return
+
+    # Constrói o menu
+    reply_markup = builder()
+
+    # Define o título do menu com base no papel
+    title = f"Menu de {active_role.capitalize()}"
+
+    # Tenta editar a mensagem existente ou envia uma nova
     if edit_message_id and edit_chat_id:
         try:
             await bot.edit_message_text(
@@ -106,6 +126,6 @@ async def show_menu(
         )
         msg_id = msg.message_id
         chat_id = msg.chat.id
-    
+
     # Atualiza o estado com os IDs da mensagem
     await state.update_data(menu_msg_id=msg_id, menu_chat_id=chat_id)
