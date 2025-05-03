@@ -38,11 +38,11 @@ log = logging.getLogger(__name__)
 
 # ─────────── títulos fixos por perfil (Markdown formatting) ────────────
 _ROLE_TITLE = {
-    "patient":         "🩹 *Paciente:*",
-    "caregiver":       "🫱🏼‍🫲🏽 *Cuidador*",
-    "physiotherapist": "👩🏼‍⚕️ *Fisioterapeuta:*",
-    "accountant":      "📊 *Contabilista:*",
-    "administrator":   "👨🏼‍💻 *Administrator:*",
+    "patient":         "🩹 *Menu:*",
+    "caregiver":       "🫱🏼‍🫲🏽 *Menu*",
+    "physiotherapist": "👩🏼‍⚕️ *Menu:*",
+    "accountant":      "📊 *Menu:*",
+    "administrator":   "👨🏼‍💻 *Menu:*",
 }
 
 # builder (InlineKeyboardMarkup) por perfil
