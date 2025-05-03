@@ -33,7 +33,6 @@ _LABELS_PT = {
 def _label(role: str) -> str:
     return _LABELS_PT.get(role.lower(), role.capitalize())
 
-
 # ───────────────────────── ask_role ─────────────────────────
 async def ask_role(
     bot: types.Bot,
@@ -48,17 +47,48 @@ async def ask_role(
         ] for r in roles]
     )
 
-    msg = await bot.send_message(
-        chat_id,
-        "🔰 *Escolha o perfil:*",
-        reply_markup=kbd,
-        parse_mode="Markdown",
-    )
-
     data = await state.get_data()
-    menu_ids: list[int] = data.get("menu_ids", [])        # ← acumular IDs
-    menu_ids.append(msg.message_id)
+    menu_ids: list[int] = data.get("menu_ids", [])        # ← IDs existentes
+    prev_msg_id = data.get("menu_msg_id")
+    prev_chat_id = data.get("menu_chat_id")
+    msg = None
+    if prev_msg_id and prev_chat_id:
+        # Tenta editar selector anterior ao invés de enviar um novo
+        try:
+            msg = await bot.edit_message_text(
+                "🔰 *Escolha o perfil:*",
+                chat_id=prev_chat_id,
+                message_id=prev_msg_id,
+                reply_markup=kbd,
+                parse_mode="Markdown",
+            )
+            # Remove outros menus de selector que possam existir
+            for mid in menu_ids:
+                if mid != prev_msg_id:
+                    with suppress(exceptions.TelegramBadRequest):
+                        await bot.delete_message(prev_chat_id, mid)
+        except exceptions.TelegramBadRequest:
+            # Falhou editar – apaga todos os selectors antigos e envia novo
+            for mid in menu_ids:
+                with suppress(exceptions.TelegramBadRequest):
+                    await bot.delete_message(prev_chat_id or chat_id, mid)
+            msg = await bot.send_message(
+                chat_id,
+                "🔰 *Escolha o perfil:*",
+                reply_markup=kbd,
+                parse_mode="Markdown",
+            )
+    else:
+        msg = await bot.send_message(
+            chat_id,
+            "🔰 *Escolha o perfil:*",
+            reply_markup=kbd,
+            parse_mode="Markdown",
+        )
 
+    # Actualiza lista de IDs e estado FSM
+    if not (prev_msg_id and msg.message_id == prev_msg_id):
+        menu_ids.append(msg.message_id)
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
         roles=[r.lower() for r in roles],
@@ -68,7 +98,6 @@ async def ask_role(
     )
 
     start_menu_timeout(bot, msg, state)                   # timeout genérico
-
 
 # ─────────────────── callback «role:…» ────────────────────
 @router.callback_query(
@@ -84,27 +113,13 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     if role not in roles:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
+    await cb.answer(f"Perfil {_label(role)} seleccionado!")
 
-    # ─── remover TODOS os selectors que possam existir ───
+    # ─── remover os outros selectors abertos ───
     for mid in menu_ids:
         with suppress(exceptions.TelegramBadRequest):
             await cb.bot.delete_message(cb.message.chat.id, mid)
-        with suppress(exceptions.TelegramBadRequest):
-            await cb.bot.edit_message_text(
-                chat_id=cb.message.chat.id,
-                message_id=mid,
-                text="\u200b",
-                reply_markup=None,
-            )
 
     # ─── prossegue com a troca de perfil ───
-    await state.clear()
-    await state.update_data(active_role=role)   # já não precisamos de roles/menu_ids
-
-    if role == "administrator":
-        await state.set_state(AdminMenuStates.MAIN)
-    else:
-        await state.set_state(None)
-
-    await cb.answer(f"Perfil {_label(role)} seleccionado!")
-    await show_menu(cb.bot, cb.from_user.id, state, [role])
+    await state.update_data(menu_msg_id=cb.message.message_id, menu_chat_id=cb.message.chat.id, active_role=role)
+    await show_menu(cb.bot, cb.from_user.id, state, [role], requested=role)
