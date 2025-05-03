@@ -2,17 +2,11 @@
 """
 Selector de perfil quando o utilizador tem ≥ 2 papéis.
 
-Fluxo:
-1. ask_role() envia o selector e guarda *todos* os IDs (lista menu_ids).
-2. choose_role():
-   • apaga qualquer selector extra que tenha ficado no histórico
-     (só preserva cb.message);
-   • transforma ESSA bolha no primeiro menu do perfil escolhido
-     (ou recria, se não der para editar);
-   • actualiza o FSM e reinicia o timeout.
-
-Resultado: selector desaparece → menu aparece na mesma posição,
-sem animação perceptível.
+• Mostra inline-keyboard (timeout em bot/menus/common.py)
+• Guarda TODOS os IDs dos selectors abertos
+• Na escolha de perfil:
+  – remove selectors excedentários
+  – edita o selector clicado → primeiro menu do perfil escolhido
 """
 
 from __future__ import annotations
@@ -28,7 +22,7 @@ from bot.menus.common              import start_menu_timeout
 from bot.states.menu_states        import MenuStates
 from bot.states.admin_menu_states  import AdminMenuStates
 
-# builders dos menus (todos devolvem InlineKeyboardMarkup)
+# builders (todos devolvem InlineKeyboardMarkup)
 from bot.menus.patient_menu         import build_menu as _patient
 from bot.menus.caregiver_menu       import build_menu as _caregiver
 from bot.menus.physiotherapist_menu import build_menu as _physio
@@ -37,7 +31,6 @@ from bot.menus.administrator_menu   import build_menu as _admin
 
 router = Router(name="role_choice")
 
-# ─────────────────────────── UI helpers ────────────────────────────
 _LABELS_PT = {
     "patient":         "🧑🏼‍🦯 Paciente",
     "caregiver":       "🤝🏼 Cuidador",
@@ -56,14 +49,14 @@ _ROLE_MENU: Dict[str, Callable[[], types.InlineKeyboardMarkup]] = {
     "administrator":   _admin,
 }
 
-# ───────────────────────── ask_role ─────────────────────────
+# ─────────────────────── ask_role ────────────────────────
 async def ask_role(
     bot: types.Bot,
     chat_id: int,
     state: FSMContext,
     roles: Iterable[str],
 ) -> None:
-    """Envia o selector e regista TODOS os IDs no FSM (menu_ids)."""
+    """Envia o selector e acumula o seu ID em menu_ids."""
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[[
             types.InlineKeyboardButton(text=_label(r), callback_data=f"role:{r.lower()}")
@@ -86,16 +79,14 @@ async def ask_role(
     )
     start_menu_timeout(bot, msg, state)
 
-# ───────── util: editar ou criar menu (mesmo dos admins) ─────────
-async def _replace_menu(
+# ─────────────────── helper: edit ou recria ───────────────────
+async def _edit_or_create(
     cb: types.CallbackQuery,
     state: FSMContext,
     text: str,
     kbd: types.InlineKeyboardMarkup,
-) -> None:
-    """Edita (ou recria) a bolha do selector → primeiro menu."""
-    await state.update_data(menu_msg_id=cb.message.message_id,
-                            menu_chat_id=cb.message.chat.id)
+) -> types.Message:
+    """Edita cb.message; se não der, elimina-a e envia nova."""
     try:
         await cb.message.edit_text(text, reply_markup=kbd, parse_mode="Markdown")
         msg = cb.message
@@ -103,11 +94,13 @@ async def _replace_menu(
         with suppress(exceptions.TelegramBadRequest):
             await cb.message.delete()
         msg = await cb.message.answer(text, reply_markup=kbd, parse_mode="Markdown")
-        await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
 
+    # actualizar menu_* no FSM
+    await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
     start_menu_timeout(cb.bot, msg, state)
+    return msg
 
-# ─────────────────── callback «role:…» ────────────────────
+# ─────────────────── callback «role:…» ───────────────────
 @router.callback_query(
     StateFilter(MenuStates.WAIT_ROLE_CHOICE),
     F.data.startswith("role:"),
@@ -115,18 +108,17 @@ async def _replace_menu(
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     role = cb.data.split(":", 1)[1].lower()
     data = await state.get_data()
-
     if role not in data.get("roles", []):
         return await cb.answer("Perfil inválido.", show_alert=True)
 
-    # ─── remover QUALQUER selector que não seja o actual ───
+    # 1) remover selectors que não sejam o clicado
     for mid in data.get("menu_ids", []):
         if mid == cb.message.message_id:
             continue
         with suppress(exceptions.TelegramBadRequest):
             await cb.bot.delete_message(cb.message.chat.id, mid)
 
-    # ─── actualizar FSM ─────────────────────────────────────
+    # 2) actualizar FSM (mantém-se active_role)
     await state.clear()
     await state.update_data(active_role=role)
 
@@ -135,7 +127,7 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     else:
         await state.set_state(None)
 
-    # ─── construir primeiro menu ────────────────────────────
+    # 3) construir primeiro menu desse perfil
     builder = _ROLE_MENU.get(role)
     if builder is None:
         return await cb.answer("Menu não definido.", show_alert=True)
@@ -147,6 +139,6 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     )
     kbd = builder()
 
-    # ─── trocar suavemente ──────────────────────────────────
-    await _replace_menu(cb, state, title, kbd)
+    # 4) editar mensagem → menu final
+    await _edit_or_create(cb, state, title, kbd)
     await cb.answer(f"Perfil {_label(role)} seleccionado!")
