@@ -70,38 +70,52 @@ async def ask_role(bot: types.Bot, chat_id: int, state: FSMContext, roles: Itera
     lambda c: c.data and c.data.startswith("role:"),
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
-    role   = cb.data.split(":", 1)[1].lower()
-    data   = await state.get_data()
-    roles  = data.get("roles", [])
+    role = cb.data.split(":", 1)[1].lower()
+    data = await state.get_data()
+    roles = data.get("roles", [])
 
     if role not in roles:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
-    # 1) cancelar task de timeout (se ainda correr)
-    timeout_task: asyncio.Task | None = data.get("timeout_task")
-    if timeout_task and not timeout_task.done():
-        timeout_task.cancel()
-
-    selector_id   = data.get("menu_msg_id")
+    selector_id = data.get("menu_msg_id")
     selector_chat = data.get("menu_chat_id")
 
-    # 2) tenta «esconder» (editar) imediatamente
-    if selector_id and selector_chat:
-        with suppress(exceptions.TelegramBadRequest):
-            await cb.bot.edit_message_text(
-                chat_id      = selector_chat,
-                message_id   = selector_id,
-                text         = "\u200b",              # invisível
-                reply_markup = None,                  # remove teclado
-            )
-        # 3) e, em seguida, apagar definitivamente (não faz mal se falhar)
-        with suppress(exceptions.TelegramBadRequest):
-            await cb.bot.delete_message(selector_chat, selector_id)
+    # Passo 1: Tornar o menu invisível (remover teclado e dar feedback temporário)
+    try:
+        await cb.bot.edit_message_text(
+            chat_id=selector_chat,
+            message_id=selector_id,
+            text="⏳ Processando sua seleção...",
+            reply_markup=None  # Remove os botões
+        )
+    except exceptions.TelegramBadRequest:
+        # Se falhar, logar o erro, mas prosseguir
+        logging.error(f"Erro ao tornar o menu invisível: chat {selector_chat}, msg {selector_id}")
 
-    # 4) prossegue com a troca de perfil
+    # Passo 2: Substituir por caractere invisível (após breve intervalo)
+    await asyncio.sleep(1)  # 1 segundo para o usuário ver o "Processando..."
+    try:
+        await cb.bot.edit_message_text(
+            chat_id=selector_chat,
+            message_id=selector_id,
+            text="\u200B",  # Espaço de largura zero
+            reply_markup=None
+        )
+    except exceptions.TelegramBadRequest:
+        # Se falhar, logar, mas prosseguir
+        logging.error(f"Erro ao substituir por caractere invisível: chat {selector_chat}, msg {selector_id}")
+
+    # Passo 3: Tentar apagar a mensagem
+    try:
+        await cb.bot.delete_message(chat_id=selector_chat, message_id=selector_id)
+    except exceptions.TelegramBadRequest:
+        # Se falhar, a mensagem já está invisível, então não é crítico
+        logging.warning(f"Não foi possível apagar a mensagem: chat {selector_chat}, msg {selector_id}")
+
+    # Prosseguir com a troca de perfil
     await state.clear()
-    await state.update_data(active_role=role)
+    await state.update_data(active_role=role, roles=roles)
 
     if role == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
