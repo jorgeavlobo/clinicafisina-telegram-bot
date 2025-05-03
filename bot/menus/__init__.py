@@ -50,7 +50,7 @@ async def _purge_all_menus(bot: Bot, state: FSMContext) -> None:
     show_menu() para conter só o menu acabado de abrir.
     """
     data      = await state.get_data()
-    chat_id   = data.get("menu_chat_id")
+    chat_id   = data.get("menu_chat_id")        # mesmo chat p/ todos
     menu_ids: List[int] = data.get("menu_ids", [])
 
     if not chat_id or not menu_ids:
@@ -67,65 +67,68 @@ async def show_menu(
     state: FSMContext,
     roles: List[str],
     requested: str | None = None,
-    edit_message_id: int = None,
-    edit_chat_id: int = None,
 ) -> None:
-    # Determina o papel ativo
-    data = await state.get_data()
-    active_role = requested or data.get("active_role")
-    
-    if active_role is None:
-        if len(roles) == 1:
-            active_role = roles[0]
-        else:
-            # Se houver múltiplos papéis e nenhum ativo, pede ao usuário para escolher
-            await bot.send_message(chat_id, "Por favor, selecione um papel.")
-            return
-
-    # Obtém a função de construção de menu para o papel ativo
-    builder = _ROLE_MENU.get(active_role)
-    if builder is None:
-        await bot.send_message(chat_id, f"Menu para o papel '{active_role}' não está disponível.")
+    # 0) sem papéis válidos
+    if not roles:
+        await bot.send_message(
+            chat_id,
+            "⚠️ Ainda não tem permissões atribuídas.\n"
+            "Contacte a receção/administrador.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await clear_keep_role(state)
         return
 
-    # Constrói o menu
-    reply_markup = builder()
+    # 1) determina o papel activo
+    data   = await state.get_data()
+    active = requested or data.get("active_role")
+    if active is None:
+        if len(roles) > 1:
+            from bot.handlers.role_choice_handlers import ask_role   # evitar ciclo
+            await _purge_all_menus(bot, state)
+            await ask_role(bot, chat_id, state, roles)
+            return
+        active = roles[0]
 
-    # Define o título do menu com base no papel
-    title = f"Menu de {active_role.capitalize()}"
+    # 2) guarda escolha
+    await state.update_data(active_role=active)
 
-    # Tenta editar a mensagem existente ou envia uma nova
-    if edit_message_id and edit_chat_id:
-        try:
-            await bot.edit_message_text(
-                chat_id=edit_chat_id,
-                message_id=edit_message_id,
-                text=title,
-                reply_markup=reply_markup,
-                parse_mode="Markdown",
-            )
-            msg_id = edit_message_id
-            chat_id = edit_chat_id
-        except exceptions.TelegramBadRequest:
-            # Se falhar (ex.: mensagem não existe), envia nova mensagem
-            msg = await bot.send_message(
-                chat_id,
-                title,
-                reply_markup=reply_markup,
-                parse_mode="Markdown",
-            )
-            msg_id = msg.message_id
-            chat_id = msg.chat.id
-    else:
-        # Caso não haja IDs para edição, envia nova mensagem
-        msg = await bot.send_message(
-            chat_id,
-            title,
-            reply_markup=reply_markup,
-            parse_mode="Markdown",
+    # 3) builder do menu
+    builder = _ROLE_MENU.get(active)
+    if builder is None:
+        await bot.send_message(
+            chat_id, "❗ Menu não definido para este perfil.",
+            reply_markup=ReplyKeyboardRemove(),
         )
-        msg_id = msg.message_id
-        chat_id = msg.chat.id
+        return
 
-    # Atualiza o estado com os IDs da mensagem
-    await state.update_data(menu_msg_id=msg_id, menu_chat_id=chat_id)
+    # 4) apaga todos os menus antigos antes de criar um novo
+    await _purge_all_menus(bot, state)
+
+    title = (
+        "💻 *Menu administrador:*"
+        if active == "administrator"
+        else f"👤 *{active.title()}* – menu principal"
+    )
+    msg = await bot.send_message(
+        chat_id,
+        title,
+        reply_markup=builder(),
+        parse_mode="Markdown",
+    )
+
+    # 5) regista **só** o menu agora criado
+    await state.update_data(
+        menu_msg_id = msg.message_id,
+        menu_chat_id = chat_id,
+        menu_ids     = [msg.message_id],        # lista reiniciada
+    )
+
+    # 6) estado FSM base
+    if active == "administrator":
+        await state.set_state(AdminMenuStates.MAIN)
+    else:
+        await state.set_state(None)   # manter FSM “limpa”
+
+    # 7) (re)inicia timeout automático
+    start_menu_timeout(bot, msg, state)
