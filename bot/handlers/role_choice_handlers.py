@@ -2,10 +2,11 @@
 """
 Selector de perfil quando o utilizador tem ≥ 2 papéis.
 
-• Mostra inline-keyboard (timeout gerido por bot/menus/common.py)
+• Mostra inline-keyboard (timeout é gerido em bot/menus/common.py)
 • Depois da escolha grava «active_role» no FSM
-• Fecha/limpa o selector de forma ROBUSTA:
-    delete_message  →  edit (texto invisível)  →  fallback comum
+• Remove SEMPRE a mensagem do selector:
+      cb.message.delete()
+   →  se falhar, cb.message.edit_text("\u200b", reply_markup=None)
 """
 
 from __future__ import annotations
@@ -17,14 +18,14 @@ from aiogram import Router, types, exceptions, F
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
-from bot.menus                    import show_menu
-from bot.menus.common             import start_menu_timeout, _hide_menu_after
-from bot.config                   import MESSAGE_TIMEOUT
-from bot.states.menu_states       import MenuStates
-from bot.states.admin_menu_states import AdminMenuStates
+from bot.menus                     import show_menu
+from bot.menus.common              import start_menu_timeout
+from bot.states.menu_states        import MenuStates
+from bot.states.admin_menu_states  import AdminMenuStates
 
 router = Router(name="role_choice")
 
+# ────────────────────────── rótulos PT ──────────────────────────
 _LABELS_PT = {
     "patient":         "🧑🏼‍🦯 Paciente",
     "caregiver":       "🤝🏼 Cuidador",
@@ -42,12 +43,11 @@ async def ask_role(
     state: FSMContext,
     roles: Iterable[str],
 ) -> None:
+    """Envia o selector de perfis e coloca o FSM em WAIT_ROLE_CHOICE."""
+
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[[
-            types.InlineKeyboardButton(
-                text=_label(r),
-                callback_data=f"role:{r.lower()}",
-            )
+            types.InlineKeyboardButton(text=_label(r), callback_data=f"role:{r.lower()}")
         ] for r in roles]
     )
 
@@ -58,6 +58,7 @@ async def ask_role(
         parse_mode="Markdown",
     )
 
+    # regista a mensagem como “menu activo” (+ lista de roles)
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
         roles=[r.lower() for r in roles],
@@ -65,59 +66,39 @@ async def ask_role(
         menu_chat_id=msg.chat.id,
     )
 
-    start_menu_timeout(bot, msg, state)   # timeout/limpeza automática
+    start_menu_timeout(bot, msg, state)   # timeout automático comum
 
 # ─────────────────── callback «role:…» ────────────────────
 @router.callback_query(
     StateFilter(MenuStates.WAIT_ROLE_CHOICE),
-    F.data.startswith("role:")
+    F.data.startswith("role:"),
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
-    role   = cb.data.split(":", 1)[1].lower()
-    data   = await state.get_data()
-    roles  = data.get("roles", [])
+    role  = cb.data.split(":", 1)[1].lower()
+    data  = await state.get_data()
+    roles = data.get("roles", [])
 
     if role not in roles:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
-    # ─── fechar o selector ───
-    selector_id   = data.get("menu_msg_id")
-    selector_chat = data.get("menu_chat_id")
+    # 1) responde logo à callback (fecha o “loading” no cliente)
+    await cb.answer(f"Perfil {_label(role)} seleccionado!")
 
-    if selector_id and selector_chat:
-        # 1) tenta APAGAR tudo de uma vez
-        deleted = False
-        try:
-            await cb.bot.delete_message(selector_chat, selector_id)
-            deleted = True
-        except exceptions.TelegramBadRequest:
-            deleted = False
+    # 2) tenta APAGAR a mensagem-menu
+    deleted = False
+    try:
+        await cb.message.delete()          # mensagem que originou o callback
+        deleted = True
+    except exceptions.TelegramBadRequest:
+        pass
 
-        if not deleted:
-            # 2) se não deu, tenta editar (texto invisível + remove teclado)
-            edited = False
-            with suppress(exceptions.TelegramBadRequest):
-                await cb.bot.edit_message_text(
-                    chat_id   = selector_chat,
-                    message_id= selector_id,
-                    text      = "\u200b",           # ZERO-WIDTH SPACE
-                    reply_markup=None,
-                )
-                edited = True
+    # 3) se não conseguiu (p.e. falta de permissão), oculta conteúdo/teclado
+    if not deleted:
+        with suppress(exceptions.TelegramBadRequest):
+            await cb.message.edit_text("\u200b", reply_markup=None)  # invisível
 
-            # 3) se nem isso foi possível → fallback comum
-            if not edited:
-                await _hide_menu_after(
-                    bot             = cb.bot,
-                    chat_id         = selector_chat,
-                    msg_id          = selector_id,
-                    state           = state,
-                    menu_timeout    = 0,            # executa já
-                    message_timeout = MESSAGE_TIMEOUT,
-                )
-
-    # ─── prossegue com a troca de perfil ───
+    # 4) actualiza FSM: limpa dados temporários e guarda papel activo
     await state.clear()
     await state.update_data(active_role=role, roles=roles)
 
@@ -126,5 +107,5 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     else:
         await state.set_state(None)
 
-    await cb.answer(f"Perfil {_label(role)} seleccionado!")
-    await show_menu(cb.bot, cb.message.chat.id, state, [role])
+    # 5) mostra o menu correspondente ao perfil escolhido
+    await show_menu(cb.bot, cb.from_user.id, state, [role])
