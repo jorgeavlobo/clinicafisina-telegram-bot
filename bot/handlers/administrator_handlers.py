@@ -36,7 +36,7 @@ router = Router(name="administrator")
 def _agenda_kbd() -> types.InlineKeyboardMarkup:
     return types.InlineKeyboardMarkup(
         inline_keyboard=[
-            [types.InlineKeyboardButton(text="📆 Geral",         callback_data="agenda:geral")],
+            [types.InlineKeyboardButton(text="📆 Geral", callback_data="agenda:geral")],
             [types.InlineKeyboardButton(text="🩺 Fisioterapeuta", callback_data="agenda:fisios")],
             [back_button()],
         ]
@@ -71,7 +71,6 @@ async def _replace_menu(
         await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
 
     start_menu_timeout(cb.bot, msg, state)
-
 
 async def _close_menu(cb: types.CallbackQuery, state: FSMContext, confirmation: str) -> None:
     """Remove o teclado inline e mostra confirmação."""
@@ -126,6 +125,7 @@ async def open_messages(cb: types.CallbackQuery, state: FSMContext):
 async def agenda_placeholder(cb: types.CallbackQuery, state: FSMContext):
     destino = "Geral" if cb.data.endswith("geral") else "Fisioterapeuta"
     await cb.answer(f"🚧 Agenda {destino} – em desenvolvimento", show_alert=True)
+
     await _close_menu(cb, state, f"📅 *Agenda {destino}* – em desenvolvimento")
     await state.set_state(AdminMenuStates.MAIN)
 
