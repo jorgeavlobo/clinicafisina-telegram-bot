@@ -1,33 +1,28 @@
 # bot/handlers/role_choice_handlers.py
 """
-Handle the 'choose profile' inline-menu.
-
-• ask_role()     – sends selector with buttons
-• choose_role()  – processes click, hides selector, switches role
+Selector de perfil:
+• ask_role  – envia o menu “🔰 Escolha o perfil:”
+• choose_role – trata o clique, apaga o selector e mostra o menu do perfil
 """
 
 from __future__ import annotations
 from typing import Iterable
 import logging
 
-from aiogram import Router, types, exceptions          # ← exceptions ADDED
+from aiogram import Router, types, exceptions
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
-from bot.menus                     import show_menu
-from bot.menus.common              import start_menu_timeout
-from bot.config                    import MESSAGE_TIMEOUT
-from bot.states.menu_states        import MenuStates
-from bot.states.admin_menu_states  import AdminMenuStates
-
-import logging, os
-log = logging.getLogger(__name__)
-print("### ROLE_HANDLER_VERSION = 2025-05-03-B ###")   # ← ficará sempre no log
-log.warning("### ROLE_HANDLER_VERSION = 2025-05-03-B ###")
+from bot.menus import show_menu
+from bot.menus.common import start_menu_timeout        # _hide_menu_after NUNCA!
+from bot.config import MESSAGE_TIMEOUT
+from bot.states.menu_states import MenuStates
+from bot.states.admin_menu_states import AdminMenuStates
 
 router = Router(name="role_choice")
-log = logging.getLogger(__name__)                      # temporary debug
+log = logging.getLogger(__name__)
 
+# —— labels ——————————————————————————
 _LABELS_PT: dict[str, str] = {
     "patient":         "🧑🏼‍🦯 Paciente",
     "caregiver":       "🤝🏼 Cuidador",
@@ -38,15 +33,14 @@ _LABELS_PT: dict[str, str] = {
 def _label(role: str) -> str:
     return _LABELS_PT.get(role.lower(), role.capitalize())
 
-
-# ───────────────────────── ask_role ─────────────────────────
+# —— ask_role —————————————————————————
 async def ask_role(
     bot: types.Bot,
     chat_id: int,
     state: FSMContext,
     roles: Iterable[str],
 ) -> None:
-    """Send the inline selector “🔰 Escolha o perfil:”."""
+    """Envia o selector inline com os perfis permitidos."""
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[[
             types.InlineKeyboardButton(
@@ -70,15 +64,14 @@ async def ask_role(
     )
     start_menu_timeout(bot, msg, state)
 
-
-# ─────────────────── callback “role:…” ───────────────────
+# —— choose_role ——————————————————————
 @router.callback_query(
     StateFilter(MenuStates.WAIT_ROLE_CHOICE),
     lambda c: c.data and c.data.startswith("role:"),
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
-    """Hide selector and load the menu of the chosen profile."""
-    await cb.answer()                                 # stop Telegram spinner
+    """Apaga o selector e abre o menu do perfil escolhido."""
+    await cb.answer()                           # pára o spinner
 
     role  = cb.data.split(":", 1)[1].lower()
     data  = await state.get_data()
@@ -88,21 +81,20 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
-    # 1️⃣ hide selector message immediately
+    # — 1. apagar a mensagem-selector —
     try:
-        log.debug("Trying delete_message id=%s", cb.message.message_id)
+        log.debug("delete_message id=%s", cb.message.message_id)
         await cb.message.delete()
-        log.debug("delete_message OK")
     except exceptions.TelegramBadRequest as e:
-        log.warning("delete_message failed: %s", e)
+        log.warning("delete falhou: %s – tentar blank", e)
         try:
             await cb.message.edit_reply_markup(reply_markup=None)
             await cb.message.edit_text("\u200B", parse_mode=None)
-            log.debug("Selector blanked via edit_text")
+            log.debug("selector blanked via edit")
         except exceptions.TelegramBadRequest as e2:
-            log.error("edit_text failed: %s", e2)
+            log.error("edit_text falhou: %s", e2)
 
-    # 2️⃣ switch FSM / role --------------------------------
+    # — 2. actualizar FSM / role —
     await state.clear()
     await state.update_data(active_role=role, roles=roles)
 
