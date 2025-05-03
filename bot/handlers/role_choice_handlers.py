@@ -9,7 +9,6 @@ Selector de perfil quando o utilizador tem ≥ 2 papéis.
 
 from __future__ import annotations
 
-from contextlib import suppress
 from typing import Iterable
 
 from aiogram import Router, types, exceptions, F
@@ -23,6 +22,7 @@ from bot.states.admin_menu_states  import AdminMenuStates
 
 router = Router(name="role_choice")
 
+# Dicionário para traduzir os papéis para português
 _LABELS_PT = {
     "patient":         "paciente",
     "caregiver":       "cuidador",
@@ -30,30 +30,35 @@ _LABELS_PT = {
     "accountant":      "contabilista",
     "administrator":   "administrador",
 }
+
 def _label(role: str) -> str:
+    """Retorna o rótulo traduzido do papel."""
     return _LABELS_PT.get(role.lower(), role.capitalize())
 
 # ───────────────────────── ask_role ─────────────────────────
 async def ask_role(
-    bot: types.Bot,
+    bot: types.Bot,  # Parâmetro necessário para interagir com o Telegram
     chat_id: int,
     state: FSMContext,
-    roles: Iterable[str],
+    roles: Iterable[str],  # Lista de papéis disponíveis para o usuário
 ) -> None:
     """Envia ou edita o selector de perfis, mantendo apenas uma mensagem ativa."""
+    # Cria o teclado inline com os papéis disponíveis
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[[
             types.InlineKeyboardButton(text=_label(r), callback_data=f"role:{r.lower()}")
         ] for r in roles]
     )
-    text = "*Escolha o perfil:*"  # Fixed Markdown syntax
+    text = "*Escolha o perfil:*"  # Texto em Markdown válido
 
+    # Recupera os dados do estado para verificar se já existe uma mensagem
     data = await state.get_data()
     menu_msg_id = data.get("menu_msg_id")
     menu_chat_id = data.get("menu_chat_id")
 
     if menu_msg_id and menu_chat_id:
         try:
+            # Tenta editar a mensagem existente
             await bot.edit_message_text(
                 chat_id=menu_chat_id,
                 message_id=menu_msg_id,
@@ -61,8 +66,10 @@ async def ask_role(
                 reply_markup=kbd,
                 parse_mode="Markdown",
             )
-        except exceptions.TelegramBadRequest:
-            # Fallback to sending a new message if editing fails
+            print(f"Mensagem editada: ID {menu_msg_id}, Chat {menu_chat_id}")
+        except exceptions.TelegramBadRequest as e:
+            print(f"Falha ao editar mensagem: {e}")
+            # Fallback: envia uma nova mensagem se a edição falhar
             msg = await bot.send_message(
                 chat_id,
                 text,
@@ -70,7 +77,9 @@ async def ask_role(
                 parse_mode="Markdown",
             )
             await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
+            print(f"Nova mensagem enviada: ID {msg.message_id}, Chat {msg.chat.id}")
     else:
+        # Envia uma nova mensagem se não houver uma anterior
         msg = await bot.send_message(
             chat_id,
             text,
@@ -78,10 +87,12 @@ async def ask_role(
             parse_mode="Markdown",
         )
         await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
+        print(f"Menu enviado: ID {msg.message_id}, Chat {msg.chat.id}")
 
+    # Define o estado para aguardar a escolha do papel
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(roles=[r.lower() for r in roles])
-    start_menu_timeout(bot, msg, state)
+    start_menu_timeout(bot, msg, state)  # Inicia o timeout do menu
 
 # ─────────────────── callback «role:…» ────────────────────
 @router.callback_query(
@@ -89,22 +100,26 @@ async def ask_role(
     F.data.startswith("role:"),
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
-    role = cb.data.split(":", 1)[1].lower()
+    """Processa a escolha do papel e edita a mensagem com o menu correspondente."""
+    role = cb.data.split(":", 1)[1].lower()  # Extrai o papel selecionado
     data = await state.get_data()
     roles = data.get("roles", [])
 
+    # Verifica se o papel é válido
     if role not in roles:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
+    # Armazena o papel ativo no estado
     await state.update_data(active_role=role)
 
+    # Define o estado com base no papel
     if role == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
     else:
         await state.set_state(None)
 
-    # Edit the existing message with the role-specific menu
+    # Edita a mensagem existente com o menu específico do papel
     await show_menu(
         cb.bot,
         cb.from_user.id,
