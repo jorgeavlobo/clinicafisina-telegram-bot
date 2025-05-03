@@ -27,7 +27,7 @@ from bot.database import connection
 # ───────────────────────────── main() ────────────────────────────────
 async def main() -> None:
     logging.basicConfig(
-        level=LOG_LEVEL,
+        level=logging.DEBUG,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     )
 
