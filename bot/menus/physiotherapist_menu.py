@@ -1,11 +1,20 @@
 # bot/menus/physiotherapist_menu.py
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+"""
+Inline-keyboard menu for the *Physiotherapist* profile.
+Converted from ReplyKeyboardMarkup so the first menu can be edited
+in-place (smooth transition from the role selector).
+"""
 
-def build_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="👥 Lista de Pacientes")],
-            [KeyboardButton(text="📊 Relatórios")],
-        ],
-        resize_keyboard=True,
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+def build_menu() -> InlineKeyboardMarkup:
+    """
+    Main physiotherapist menu as an inline keyboard.
+    Callback-data uses the prefix «ph:».
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="👥 Lista de Pacientes", callback_data="ph:patients")],
+            [InlineKeyboardButton(text="📊 Relatórios",         callback_data="ph:reports")],
+        ]
     )
