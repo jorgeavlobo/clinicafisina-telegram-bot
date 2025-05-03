@@ -1,114 +1,109 @@
 # bot/handlers/role_choice_handlers.py
-"""
-Selector de perfil quando o utilizador tem ≥ 2 papéis.
-
-• Mostra inline-keyboard com timeout comum (common.py)
-• Cancela a task de timeout assim que o utilizador escolhe
-• Remove teclado, tenta apagar a mensagem e só depois abre o novo menu
-"""
-
 from __future__ import annotations
-import asyncio
 from contextlib import suppress
 from typing import Iterable
 
-import logging
 from aiogram import Router, types, exceptions
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
-from bot.menus                    import show_menu
-from bot.menus.common             import start_menu_timeout, _hide_menu_after
-from bot.config                   import MENU_TIMEOUT, MESSAGE_TIMEOUT
-from bot.states.menu_states       import MenuStates
-from bot.states.admin_menu_states import AdminMenuStates
+from bot.menus                     import show_menu
+from bot.menus.common              import start_menu_timeout, hide_menu_now
+from bot.config                    import MESSAGE_TIMEOUT
+from bot.states.menu_states        import MenuStates
+from bot.states.admin_menu_states  import AdminMenuStates
 
 router = Router(name="role_choice")
 
-_LABELS_PT = {
+_LABELS_PT: dict[str, str] = {
     "patient":         "🧑🏼‍🦯 Paciente",
     "caregiver":       "🤝🏼 Cuidador",
     "physiotherapist": "👩🏼‍⚕️ Fisioterapeuta",
     "accountant":      "📊 Contabilista",
     "administrator":   "👨🏼‍💼 Administrador",
 }
-def _label(r: str) -> str: return _LABELS_PT.get(r.lower(), r.capitalize())
+def _label(role: str) -> str:
+    """Return localised label for role; fallback to capitalised name."""
+    return _LABELS_PT.get(role.lower(), role.capitalize())
 
 
-# ───────────────────── ask_role ─────────────────────
-async def ask_role(bot: types.Bot, chat_id: int, state: FSMContext, roles: Iterable[str]) -> None:
+# ───────────────────────── ask_role ─────────────────────────
+async def ask_role(
+    bot: types.Bot,
+    chat_id: int,
+    state: FSMContext,
+    roles: Iterable[str],
+) -> None:
+    """Send the profile-selector menu and set FSM into waiting state."""
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[
-            [types.InlineKeyboardButton(text=_label(r), callback_data=f"role:{r.lower()}")]
+            [types.InlineKeyboardButton(text=_label(r),
+                                        callback_data=f"role:{r.lower()}")]
             for r in roles
         ]
     )
-    msg = await bot.send_message(chat_id, "🔰 *Escolha o perfil:*", reply_markup=kbd, parse_mode="Markdown")
+    msg = await bot.send_message(
+        chat_id,
+        "🔰 *Escolha o perfil:*",
+        reply_markup=kbd,
+        parse_mode="Markdown",
+    )
 
-    # guarda tudo o que precisamos para limpeza posterior
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
         roles=[r.lower() for r in roles],
-        menu_msg_id=msg.message_id,
+        menu_msg_id=msg.message_id,      # selector message ID
         menu_chat_id=msg.chat.id,
     )
-
-    # timeout: cria task e guarda handle para podermos cancelar
-    task = asyncio.create_task(_hide_menu_after(
-        bot             = bot,
-        chat_id         = msg.chat.id,
-        msg_id          = msg.message_id,
-        state           = state,
-        menu_timeout    = MENU_TIMEOUT,
-        message_timeout = MESSAGE_TIMEOUT,
-    ))
-    await state.update_data(timeout_task=task)
+    start_menu_timeout(bot, msg, state)
 
 
-# ───────────────── callback «role:…» ─────────────────
+# ─────────────────── callback “role:…” ───────────────────
 @router.callback_query(
     StateFilter(MenuStates.WAIT_ROLE_CHOICE),
     lambda c: c.data and c.data.startswith("role:"),
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
-    role = cb.data.split(":", 1)[1].lower()
-    data = await state.get_data()
+    """Handle the user picking a role from the selector menu."""
+    role  = cb.data.split(":", 1)[1].lower()
+    data  = await state.get_data()
     roles = data.get("roles", [])
 
     if role not in roles:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
-    selector_id = data.get("menu_msg_id")
+    # 0️⃣  immediate feedback – stop the Telegram loading spinner
+    await cb.answer()
+
+    selector_id   = data.get("menu_msg_id")
     selector_chat = data.get("menu_chat_id")
 
-    # Passo 1: Tentar editar a mensagem para torná-la invisível
-    try:
-        await cb.bot.edit_message_text(
-            chat_id=selector_chat,
-            message_id=selector_id,
-            text="\u200B",  # Espaço de largura zero
-            reply_markup=None  # Remove os botões
-        )
-        logging.info(f"Mensagem {selector_id} editada para ficar invisível.")
-    except exceptions.TelegramBadRequest as e:
-        logging.error(f"Erro ao editar a mensagem {selector_id}: {e}")
+    # ─── 1. try to DELETE the selector message ───
+    deleted = False
+    if selector_id and selector_chat:
+        try:
+            await cb.bot.delete_message(selector_chat, selector_id)
+            deleted = True
+        except exceptions.TelegramBadRequest:
+            deleted = False
 
-    # Passo 2: Tentar apagar a mensagem
-    try:
-        await cb.bot.delete_message(chat_id=selector_chat, message_id=selector_id)
-        logging.info(f"Mensagem {selector_id} apagada com sucesso.")
-    except exceptions.TelegramBadRequest as e:
-        logging.warning(f"Não foi possível apagar a mensagem {selector_id}: {e}")
+        # ─── 2. fallback: blank the message instantly ───
+        if not deleted:
+            hide_menu_now(cb.bot, selector_chat, selector_id, state)
 
-    # Prosseguir com a troca de perfil
+    # ─── 3. proceed with role switch ───
     await state.clear()
     await state.update_data(active_role=role, roles=roles)
 
     if role == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
     else:
+        # regular users have no global FSM state
         await state.set_state(None)
 
-    await cb.answer(f"Perfil {role} seleccionado!")
+    # brief confirmation toast (non-blocking)
+    await cb.answer(f"Perfil {_label(role)} seleccionado!")
+
+    # finally, show the main menu for the selected role
     await show_menu(cb.bot, cb.message.chat.id, state, [role])
