@@ -9,7 +9,7 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
 from bot.menus                     import show_menu
-from bot.menus.common              import start_menu_timeout, md2
+from bot.menus.common              import start_menu_timeout
 from bot.states.menu_states        import MenuStates
 from bot.states.admin_menu_states  import AdminMenuStates
 
@@ -22,7 +22,6 @@ from bot.menus.administrator_menu   import build_menu as _admin
 
 router = Router(name="role_choice")
 
-# ─────────────── rótulos para o selector ────────────────
 _LABELS_PT = {
     "patient":         "🧑🏼‍🦯 Paciente",
     "caregiver":       "🤝🏼 Cuidador",
@@ -33,7 +32,6 @@ _LABELS_PT = {
 def _label(role: str) -> str:
     return _LABELS_PT.get(role.lower(), role.capitalize())
 
-# map builders
 _ROLE_MENU: Dict[str, Callable[[], types.InlineKeyboardMarkup]] = {
     "patient":         _patient,
     "caregiver":       _caregiver,
@@ -49,32 +47,19 @@ async def ask_role(
     state: FSMContext,
     roles: Iterable[str],
 ) -> None:
-    """
-    Envia o selector de perfis e acumula o seu message-id em menu_ids.
-    """
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[[
-            types.InlineKeyboardButton(
-                text=_label(r),
-                callback_data=f"role:{r.lower()}",
-            )
+            types.InlineKeyboardButton(text=_label(r), callback_data=f"role:{r.lower()}")
         ] for r in roles]
     )
     msg = await bot.send_message(
-        chat_id,
-        "🔰 *Escolha o perfil:*",
-        reply_markup=kbd,
-        parse_mode="Markdown",
+        chat_id, "🔰 Escolha o perfil:", reply_markup=kbd          # ← texto simples
     )
-
-    data = await state.get_data()
-    menu_ids: list[int] = data.get("menu_ids", [])
-    menu_ids.append(msg.message_id)
 
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
         roles=[r.lower() for r in roles],
-        menu_ids=menu_ids,
+        menu_ids=[msg.message_id],
         menu_msg_id=msg.message_id,
         menu_chat_id=msg.chat.id,
     )
@@ -91,46 +76,35 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     if role not in data.get("roles", []):
         return await cb.answer("Perfil inválido.", show_alert=True)
 
-    # encerra spinner
-    await cb.answer()
+    await cb.answer()                                  # fecha spinner
 
-    # remove selectors redundantes
+    # remove selectors que não sejam o tocado
     for mid in data.get("menu_ids", []):
-        if mid == cb.message.message_id:
-            continue
-        with suppress(exceptions.TelegramBadRequest):
-            await cb.bot.delete_message(cb.message.chat.id, mid)
+        if mid != cb.message.message_id:
+            with suppress(exceptions.TelegramBadRequest):
+                await cb.bot.delete_message(cb.message.chat.id, mid)
 
-    # limpa FSM mas preserva papel activo
+    # actualiza FSM
     await state.clear()
     await state.update_data(active_role=role)
-
     if role == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
     else:
         await state.set_state(None)
 
-    # prepara título em MarkdownV2 seguro
-    plain = (
-        "💻 Menu administrador:"
-        if role == "administrator"
-        else f"👤 {role.title()} – menu principal"
-    )
-    title = md2(f"*{plain}*")
+    builder = _ROLE_MENU[role]
+    title   = "💻 Menu administrador:" if role == "administrator" \
+             else f"👤 {role.title()} – menu principal"
 
-    kbd_builder = _ROLE_MENU[role]
-
-    # tenta editar a própria bolha
+    # tenta editar sem Markdown / parse_mode
     try:
         await cb.bot.edit_message_text(
             title,
-            chat_id=cb.message.chat.id,
-            message_id=cb.message.message_id,
-            reply_markup=kbd_builder(),
-            parse_mode="MarkdownV2",
+            chat_id   = cb.message.chat.id,
+            message_id= cb.message.message_id,
+            reply_markup=builder(),
         )
 
-        # actualiza tracking
         await state.update_data(
             menu_msg_id=cb.message.message_id,
             menu_chat_id=cb.message.chat.id,
@@ -139,7 +113,7 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
         start_menu_timeout(cb.bot, cb.message, state)
 
     except exceptions.TelegramBadRequest:
-        # se falhar, remove a mensagem e usa fluxo antigo
+        # edição falhou? remove bolha e usa fluxo antigo
         with suppress(exceptions.TelegramBadRequest):
             await cb.message.delete()
         await show_menu(cb.bot, cb.from_user.id, state, [role])
