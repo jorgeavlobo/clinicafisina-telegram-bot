@@ -1,10 +1,11 @@
 # bot/handlers/role_choice_handlers.py
 """
-Selector de perfil para utilizadores com ≥ 2 papéis.
+Selector de perfil quando o utilizador tem ≥ 2 papéis.
 
-• ask_role(): mantém no chat apenas UM selector.
-• choose_role(): responde ao callback imediatamente e
-  transforma ESSA mensagem no primeiro menu do perfil.
+• Mantém no chat um único selector
+• Responde ao callback de imediato (spinner desaparece)
+• Tenta editar a própria bolha SEM parse_mode (quase nunca falha)
+• Se a edição falhar, apaga a bolha e envia o menu novo
 """
 
 from __future__ import annotations
@@ -53,16 +54,13 @@ async def ask_role(
     state: FSMContext,
     roles: List[str],
 ) -> None:
-    """Mostra o selector, removendo o anterior se existir."""
-    # 0) limpa eventual selector anterior
-    data = await state.get_data()
-    old_id = data.get("menu_msg_id")
-    old_chat = data.get("menu_chat_id")
-    if old_id and old_chat == chat_id:
+    """Mostra um único selector (apaga o anterior se existir)."""
+    # limpar selector anterior
+    old_id  = (await state.get_data()).get("menu_msg_id")
+    if old_id:
         with suppress(exceptions.TelegramBadRequest):
             await bot.delete_message(chat_id, old_id)
 
-    # 1) novo selector
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[[
             types.InlineKeyboardButton(text=_label(r), callback_data=f"role:{r.lower()}")
@@ -80,17 +78,22 @@ async def ask_role(
     )
     start_menu_timeout(bot, msg, state)
 
-# ─────── util: edita mensagem ou recria se falhar ───────
+# ─────── util: edita ou recria mensagem ───────
 async def _edit_or_create(
     cb: types.CallbackQuery,
     text: str,
     kbd: types.InlineKeyboardMarkup,
 ) -> types.Message:
+    """
+    1) tenta editar *sem* parse_mode (muito difícil falhar);
+    2) se falhar, apaga a bolha e envia nova.
+    """
     try:
-        await cb.message.edit_text(text, reply_markup=kbd, parse_mode="Markdown")
+        await cb.message.edit_text(text, reply_markup=kbd, parse_mode=None)
         return cb.message
     except exceptions.TelegramBadRequest:
-        await cb.message.delete()
+        with suppress(exceptions.TelegramBadRequest):
+            await cb.message.delete()
         return await cb.message.answer(text, reply_markup=kbd, parse_mode="Markdown")
 
 # ───────────── callback «role:…» ─────────────
@@ -100,13 +103,14 @@ async def _edit_or_create(
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     role = cb.data.split(":", 1)[1].lower()
-    if role not in (await state.get_data()).get("roles", []):
+    data = await state.get_data()
+    if role not in data.get("roles", []):
         return await cb.answer("Perfil inválido.", show_alert=True)
 
-    # 1) termina o spinner instantaneamente
+    # encerra spinner imediatamente
     await cb.answer(cache_time=1)
 
-    # 2) actualiza FSM
+    # actualiza FSM
     await state.clear()
     await state.update_data(active_role=role)
 
@@ -115,8 +119,7 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     else:
         await state.set_state(None)
 
-    # 3) primeiro menu
-    builder = _ROLE_MENU[role]            # já validado
+    builder = _ROLE_MENU[role]          # validado acima
     title = (
         "💻 *Menu administrador:*"
         if role == "administrator"
@@ -124,6 +127,6 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     )
     kbd = builder()
 
-    # 4) edita a bolha; reinicia timeout
+    # edita bolha → menu; se não der, recria
     msg = await _edit_or_create(cb, title, kbd)
     start_menu_timeout(cb.bot, msg, state)
