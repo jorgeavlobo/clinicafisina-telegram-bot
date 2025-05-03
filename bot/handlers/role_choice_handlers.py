@@ -2,18 +2,17 @@
 """
 Selector de perfil quando o utilizador tem ≥ 2 papéis.
 
-• Mostra inline-keyboard (timeout genérico em bot/menus/common.py)
-• Acumula TODOS os IDs dos selectors abertos
+• Mostra inline-keyboard (timeout em bot/menus/common.py)
+• Guarda TODOS os IDs de selectors abertos
 • Quando o utilizador escolhe:
-      1) esconde cada selector (texto invisível + remove teclado)
-      2) tenta apagar a mensagem (se possível)
+      — edita cada selector p/ texto invisível + remove teclado
+        (não tenta apagar → transição 100 % fluída)
 """
 
 from __future__ import annotations
 
-import asyncio
 from contextlib import suppress
-from typing import Iterable
+from typing import Iterable, List
 
 from aiogram import Router, types, exceptions, F
 from aiogram.filters import StateFilter
@@ -58,7 +57,7 @@ async def ask_role(
     )
 
     data = await state.get_data()
-    menu_ids: list[int] = data.get("menu_ids", [])
+    menu_ids: List[int] = data.get("menu_ids", [])
     menu_ids.append(msg.message_id)
 
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
@@ -81,33 +80,25 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     role   = cb.data.split(":", 1)[1].lower()
     data   = await state.get_data()
     roles  = data.get("roles", [])
-    menu_ids: list[int] = data.get("menu_ids", [])
+    menu_ids: List[int] = data.get("menu_ids", [])
 
     if role not in roles:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
-    # ─── 1. Esconder todos os selectors (texto invisível + remove teclado) ───
+    # ─── “esvaziar” todos os selectors (sem apagar) ───
     for mid in menu_ids:
         with suppress(exceptions.TelegramBadRequest):
             await cb.bot.edit_message_text(
-                chat_id=cb.message.chat.id,
-                message_id=mid,
-                text="\u200b",          # ZERO-WIDTH SPACE
+                chat_id   = cb.message.chat.id,
+                message_id= mid,
+                text      = "\u200b",      # ZERO-WIDTH SPACE
                 reply_markup=None,
             )
 
-    # (pequena pausa para evitar “message is not modified” em deleção imediata)
-    await asyncio.sleep(0.1)
-
-    # ─── 2. Tentar apagar as mensagens agora “vazias” ───
-    for mid in menu_ids:
-        with suppress(exceptions.TelegramBadRequest):
-            await cb.bot.delete_message(cb.message.chat.id, mid)
-
-    # ─── troca de perfil ───
+    # ─── prossegue com a troca de perfil ───
     await state.clear()
-    await state.update_data(active_role=role)
+    await state.update_data(active_role=role)   # roles/menu_ids já não precisam
 
     if role == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
