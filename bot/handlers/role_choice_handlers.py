@@ -1,14 +1,15 @@
 # bot/handlers/role_choice_handlers.py
 """
-Selector de perfil quando o utilizador tem ≥ 2 papéis.
+Selector de perfil para utilizadores com ≥ 2 papéis.
 
-• Mostra inline-keyboard com os perfis
-• Responde ao callback de imediato (spinner some)
-• Edita a MESMA bolha para o primeiro menu do perfil escolhido
+• ask_role(): mantém no chat apenas UM selector.
+• choose_role(): responde ao callback imediatamente e
+  transforma ESSA mensagem no primeiro menu do perfil.
 """
 
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import Dict, Callable, List
 
 from aiogram import Router, types, F, exceptions
@@ -52,7 +53,16 @@ async def ask_role(
     state: FSMContext,
     roles: List[str],
 ) -> None:
-    """Envia o selector e regista o seu ID no FSM."""
+    """Mostra o selector, removendo o anterior se existir."""
+    # 0) limpa eventual selector anterior
+    data = await state.get_data()
+    old_id = data.get("menu_msg_id")
+    old_chat = data.get("menu_chat_id")
+    if old_id and old_chat == chat_id:
+        with suppress(exceptions.TelegramBadRequest):
+            await bot.delete_message(chat_id, old_id)
+
+    # 1) novo selector
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[[
             types.InlineKeyboardButton(text=_label(r), callback_data=f"role:{r.lower()}")
@@ -70,13 +80,12 @@ async def ask_role(
     )
     start_menu_timeout(bot, msg, state)
 
-# ───────── util: editar ou recriar ─────────
+# ─────── util: edita mensagem ou recria se falhar ───────
 async def _edit_or_create(
     cb: types.CallbackQuery,
     text: str,
     kbd: types.InlineKeyboardMarkup,
 ) -> types.Message:
-    """Edita cb.message; se falhar, envia nova."""
     try:
         await cb.message.edit_text(text, reply_markup=kbd, parse_mode="Markdown")
         return cb.message
@@ -84,18 +93,17 @@ async def _edit_or_create(
         await cb.message.delete()
         return await cb.message.answer(text, reply_markup=kbd, parse_mode="Markdown")
 
-# ───────────────── callback «role:…» ────────────────
+# ───────────── callback «role:…» ─────────────
 @router.callback_query(
     StateFilter(MenuStates.WAIT_ROLE_CHOICE),
     F.data.startswith("role:"),
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     role = cb.data.split(":", 1)[1].lower()
-    data = await state.get_data()
-    if role not in data.get("roles", []):
+    if role not in (await state.get_data()).get("roles", []):
         return await cb.answer("Perfil inválido.", show_alert=True)
 
-    # 1) encerra o spinner imediatamente
+    # 1) termina o spinner instantaneamente
     await cb.answer(cache_time=1)
 
     # 2) actualiza FSM
@@ -107,11 +115,8 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
     else:
         await state.set_state(None)
 
-    # 3) constrói primeiro menu
-    builder = _ROLE_MENU.get(role)
-    if builder is None:
-        return
-
+    # 3) primeiro menu
+    builder = _ROLE_MENU[role]            # já validado
     title = (
         "💻 *Menu administrador:*"
         if role == "administrator"
