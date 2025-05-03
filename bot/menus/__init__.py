@@ -50,7 +50,7 @@ async def _purge_all_menus(bot: Bot, state: FSMContext) -> None:
     show_menu() para conter só o menu acabado de abrir.
     """
     data      = await state.get_data()
-    chat_id   = data.get("menu_chat_id")        # mesmo chat p/ todos
+    chat_id   = data.get("menu_chat_id")
     menu_ids: List[int] = data.get("menu_ids", [])
 
     if not chat_id or not menu_ids:
@@ -67,6 +67,8 @@ async def show_menu(
     state: FSMContext,
     roles: List[str],
     requested: str | None = None,
+    edit_message_id: int = None,
+    edit_chat_id: int = None,
 ) -> None:
     # 0) sem papéis válidos
     if not roles:
@@ -84,7 +86,7 @@ async def show_menu(
     active = requested or data.get("active_role")
     if active is None:
         if len(roles) > 1:
-            from bot.handlers.role_choice_handlers import ask_role   # evitar ciclo
+            from bot.handlers.role_choice_handlers import ask_role
             await _purge_all_menus(bot, state)
             await ask_role(bot, chat_id, state, roles)
             return
@@ -102,33 +104,60 @@ async def show_menu(
         )
         return
 
-    # 4) apaga todos os menus antigos antes de criar um novo
-    await _purge_all_menus(bot, state)
+    # 4) apaga todos os menus antigos antes de criar um novo (se não for edição)
+    if not (edit_message_id and edit_chat_id):
+        await _purge_all_menus(bot, state)
 
     title = (
         "💻 *Menu administrador:*"
         if active == "administrator"
         else f"👤 *{active.title()}* – menu principal"
     )
-    msg = await bot.send_message(
-        chat_id,
-        title,
-        reply_markup=builder(),
-        parse_mode="Markdown",
-    )
+    reply_markup = builder()
+
+    if edit_message_id and edit_chat_id:
+        try:
+            await bot.edit_message_text(
+                chat_id=edit_chat_id,
+                message_id=edit_message_id,
+                text=title,
+                reply_markup=reply_markup,
+                parse_mode="Markdown",
+            )
+            msg_id = edit_message_id
+            chat_id = edit_chat_id
+        except exceptions.TelegramBadRequest:
+            # Fallback to sending a new message if editing fails
+            msg = await bot.send_message(
+                chat_id,
+                title,
+                reply_markup=reply_markup,
+                parse_mode="Markdown",
+            )
+            msg_id = msg.message_id
+            chat_id = msg.chat.id
+    else:
+        msg = await bot.send_message(
+            chat_id,
+            title,
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
+        )
+        msg_id = msg.message_id
+        chat_id = msg.chat.id
 
     # 5) regista **só** o menu agora criado
     await state.update_data(
-        menu_msg_id = msg.message_id,
-        menu_chat_id = chat_id,
-        menu_ids     = [msg.message_id],        # lista reiniciada
+        menu_msg_id=msg_id,
+        menu_chat_id=chat_id,
+        menu_ids=[msg_id],
     )
 
     # 6) estado FSM base
     if active == "administrator":
         await state.set_state(AdminMenuStates.MAIN)
     else:
-        await state.set_state(None)   # manter FSM “limpa”
+        await state.set_state(None)
 
     # 7) (re)inicia timeout automático
     start_menu_timeout(bot, msg, state)
