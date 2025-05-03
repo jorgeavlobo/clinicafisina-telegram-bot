@@ -46,7 +46,7 @@ async def ask_role(
             types.InlineKeyboardButton(text=_label(r), callback_data=f"role:{r.lower()}")
         ] for r in roles]
     )
-    text = "perfil*"
+    text = "*perfil*"
 
     data = await state.get_data()
     menu_msg_id = data.get("menu_msg_id")
