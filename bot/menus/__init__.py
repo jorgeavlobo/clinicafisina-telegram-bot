@@ -70,51 +70,11 @@ async def show_menu(
     edit_message_id: int = None,
     edit_chat_id: int = None,
 ) -> None:
-    # 0) sem papéis válidos
-    if not roles:
-        await bot.send_message(
-            chat_id,
-            "⚠️ Ainda não tem permissões atribuídas.\n"
-            "Contacte a receção/administrador.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        await clear_keep_role(state)
-        return
-
-    # 1) determina o papel activo
-    data   = await state.get_data()
-    active = requested or data.get("active_role")
-    if active is None:
-        if len(roles) > 1:
-            from bot.handlers.role_choice_handlers import ask_role
-            await _purge_all_menus(bot, state)
-            await ask_role(bot, chat_id, state, roles)
-            return
-        active = roles[0]
-
-    # 2) guarda escolha
-    await state.update_data(active_role=active)
-
-    # 3) builder do menu
-    builder = _ROLE_MENU.get(active)
-    if builder is None:
-        await bot.send_message(
-            chat_id, "❗ Menu não definido para este perfil.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        return
-
-    # 4) apaga todos os menus antigos antes de criar um novo (se não for edição)
-    if not (edit_message_id and edit_chat_id):
-        await _purge_all_menus(bot, state)
-
-    title = (
-        "💻 *Menu administrador:*"
-        if active == "administrator"
-        else f"👤 *{active.title()}* – menu principal"
-    )
-    reply_markup = builder()
-
+    # Lógica para construir o menu (título e teclado)
+    title = "Menu de Administrador"  # Exemplo, ajustar conforme necessário
+    reply_markup = build_admin_menu()  # Função fictícia, ajustar ao teu caso
+    
+    # Se forem fornecidos IDs para edição, tenta editar a mensagem
     if edit_message_id and edit_chat_id:
         try:
             await bot.edit_message_text(
@@ -127,7 +87,7 @@ async def show_menu(
             msg_id = edit_message_id
             chat_id = edit_chat_id
         except exceptions.TelegramBadRequest:
-            # Fallback to sending a new message if editing fails
+            # Se falhar (ex.: mensagem não existe), envia nova mensagem
             msg = await bot.send_message(
                 chat_id,
                 title,
@@ -137,6 +97,7 @@ async def show_menu(
             msg_id = msg.message_id
             chat_id = msg.chat.id
     else:
+        # Caso não haja IDs para edição, envia nova mensagem
         msg = await bot.send_message(
             chat_id,
             title,
@@ -145,19 +106,6 @@ async def show_menu(
         )
         msg_id = msg.message_id
         chat_id = msg.chat.id
-
-    # 5) regista **só** o menu agora criado
-    await state.update_data(
-        menu_msg_id=msg_id,
-        menu_chat_id=chat_id,
-        menu_ids=[msg_id],
-    )
-
-    # 6) estado FSM base
-    if active == "administrator":
-        await state.set_state(AdminMenuStates.MAIN)
-    else:
-        await state.set_state(None)
-
-    # 7) (re)inicia timeout automático
-    start_menu_timeout(bot, msg, state)
+    
+    # Atualiza o estado com os IDs da mensagem
+    await state.update_data(menu_msg_id=msg_id, menu_chat_id=chat_id)
