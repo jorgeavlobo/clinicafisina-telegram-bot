@@ -24,11 +24,11 @@ from bot.states.admin_menu_states  import AdminMenuStates
 router = Router(name="role_choice")
 
 _LABELS_PT = {
-    "patient":         "🧑🏼‍🦯 Paciente",
-    "caregiver":       "🤝🏼 Cuidador",
-    "physiotherapist": "👩🏼‍⚕️ Fisioterapeuta",
-    "accountant":      "📊 Contabilista",
-    "administrator":   "👨🏼‍💼 Administrador",
+    "patient":         "paciente",
+    "caregiver":       "cuidador",
+    "physiotherapist": "fisioterapeuta",
+    "accountant":      "contabilista",
+    "administrator":   "administrador",
 }
 def _label(role: str) -> str:
     return _LABELS_PT.get(role.lower(), role.capitalize())
@@ -46,7 +46,7 @@ async def ask_role(
             types.InlineKeyboardButton(text=_label(r), callback_data=f"role:{r.lower()}")
         ] for r in roles]
     )
-    text = "🔰 *Escolha o perfil:*"
+    text = "perfil*"
 
     data = await state.get_data()
     menu_msg_id = data.get("menu_msg_id")
