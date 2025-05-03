@@ -1,29 +1,31 @@
 # bot/handlers/role_choice_handlers.py
 """
-Profile selector shown when the user has two or more roles.
+Profile selector shown when the user owns two or more roles.
 
-Agora, quando o papel escolhido for «administrator», em vez de apagar a
-mensagem‑selector e enviar outra nova, **editamos** essa mesma bolha
-tal como já acontece dentro do menu de administrador — desaparece o
-“salto” visual.  Para os restantes papéis o fluxo mantém‑se.
-
-(Usamos a função _replace_menu() que já existe em administrator_handlers.)
+• Shows an inline-keyboard selector (generic timeout in bot/menus/common.py)
+• After the user chooses a role, the SAME message is edited –
+  identical logic to administrator_handlers._replace_menu().
 """
 
 from __future__ import annotations
 
 from contextlib import suppress
-from typing import Iterable, List
+from typing import Iterable, List, Dict, Callable
 
 from aiogram import Router, types, F, exceptions
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
-from bot.menus                     import show_menu
-from bot.menus.administrator_menu  import build_menu as _admin_menu_kbd
-from bot.states.menu_states        import MenuStates
-from bot.states.admin_menu_states  import AdminMenuStates
-from bot.handlers.administrator_handlers import _replace_menu as _admin_replace_menu
+from bot.menus.common import start_menu_timeout         # timeout helper
+from bot.states.menu_states import MenuStates
+from bot.states.admin_menu_states import AdminMenuStates
+
+# import builders used by bot/menus/__init__.py
+from bot.menus.patient_menu         import build_menu as _patient
+from bot.menus.caregiver_menu       import build_menu as _caregiver
+from bot.menus.physiotherapist_menu import build_menu as _physio
+from bot.menus.accountant_menu      import build_menu as _accountant
+from bot.menus.administrator_menu   import build_menu as _admin
 
 router = Router(name="role_choice")
 
@@ -38,6 +40,15 @@ _LABELS_PT = {
 def _label(role: str) -> str:
     return _LABELS_PT.get(role.lower(), role.capitalize())
 
+# builders por papel (mesma fonte que bot/menus)
+_ROLE_MENU: Dict[str, Callable[[], types.InlineKeyboardMarkup]] = {
+    "patient":         _patient,
+    "caregiver":       _caregiver,
+    "physiotherapist": _physio,
+    "accountant":      _accountant,
+    "administrator":   _admin,
+}
+
 # ────────────────────────── ask_role (entry) ─────────────────────────
 async def ask_role(
     bot: types.Bot,
@@ -45,7 +56,7 @@ async def ask_role(
     state: FSMContext,
     roles: Iterable[str],
 ) -> None:
-    """Show the profile selector and remember its message‑ID."""
+    """Send the profile selector and register its message‑ID."""
     kbd = types.InlineKeyboardMarkup(
         inline_keyboard=[[
             types.InlineKeyboardButton(
@@ -65,10 +76,36 @@ async def ask_role(
     await state.set_state(MenuStates.WAIT_ROLE_CHOICE)
     await state.update_data(
         roles=[r.lower() for r in roles],
-        menu_ids=[msg.message_id],
+        menu_ids=[msg.message_id],          # list with ONE selector msg
         menu_msg_id=msg.message_id,
         menu_chat_id=msg.chat.id,
     )
+    start_menu_timeout(bot, msg, state)
+
+# ─────────────────── helper: edit or recreate menu ──────────────────
+async def _replace_menu(
+    cb: types.CallbackQuery,
+    state: FSMContext,
+    text: str,
+    kbd: types.InlineKeyboardMarkup,
+) -> None:
+    """
+    Edit the current selector bubble into the first role menu.
+    Mirrors administrator_handlers._replace_menu().
+    """
+    await state.update_data(menu_msg_id=cb.message.message_id,
+                            menu_chat_id=cb.message.chat.id)
+    try:
+        await cb.message.edit_text(text, reply_markup=kbd, parse_mode="Markdown")
+        msg = cb.message
+    except exceptions.TelegramBadRequest:
+        # Fallback: delete + send
+        with suppress(exceptions.TelegramBadRequest):
+            await cb.message.delete()
+        msg = await cb.message.answer(text, reply_markup=kbd, parse_mode="Markdown")
+        await state.update_data(menu_msg_id=msg.message_id, menu_chat_id=msg.chat.id)
+
+    start_menu_timeout(cb.bot, msg, state)
 
 # ─────────────────────── callback «role:…» ──────────────────────────
 @router.callback_query(
@@ -82,33 +119,29 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
-    # ─── ADMINISTRATOR: editar a própria bolha (sem salto) ──────────
-    if role == "administrator":
-        # 1) FSM → estado base admin
-        await state.clear()
-        await state.update_data(active_role=role)
-        await state.set_state(AdminMenuStates.MAIN)
-
-        # 2) substituir o selector pelo menu
-        await _admin_replace_menu(
-            cb,
-            state,
-            "💻 *Menu:*",
-            _admin_menu_kbd(),
-        )
-
-        await cb.answer(f"Perfil {_label(role)} seleccionado!")
-        return
-
-    # ─── outros papéis (fluxo antigo) ───────────────────────────────
-    # limpa tudo, guarda active_role e mostra menu “normal”
-    for mid in data.get("menu_ids", []):
-        with suppress(exceptions.TelegramBadRequest):
-            await cb.bot.delete_message(cb.message.chat.id, mid)
-
+    # ─── update FSM ────────────────────────────────────────────────
     await state.clear()
-    await state.update_data(active_role=role)
-    await cb.answer(f"Perfil {_label(role)} seleccionado!")
+    await state.update_data(active_role=role,
+                            menu_ids=[cb.message.message_id])  # track the bubble
 
-    # show_menu criará uma nova mensagem (não faz mal aqui)
-    await show_menu(cb.bot, cb.from_user.id, state, [role])
+    if role == "administrator":
+        await state.set_state(AdminMenuStates.MAIN)
+    else:
+        await state.set_state(None)
+
+    # ─── build first menu for the chosen role ──────────────────────
+    builder = _ROLE_MENU.get(role)
+    if not builder:                                            # safety
+        return await cb.answer("Menu não definido.", show_alert=True)
+
+    title = (
+        "💻 *Menu administrador:*"
+        if role == "administrator"
+        else f"👤 *{role.title()}* – menu principal"
+    )
+    kbd = builder()
+
+    # edit (or recreate) the selector message → perfectly smooth
+    await _replace_menu(cb, state, title, kbd)
+
+    await cb.answer(f"Perfil {_label(role)} seleccionado!")
