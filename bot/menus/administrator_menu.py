@@ -1,6 +1,6 @@
 # bot/menus/administrator_menu.py
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from bot.menus.common import back_button
+from bot.menus.ui_helpers import back_button
 
 __all__ = ["build_menu", "build_user_type_kbd"]
 
