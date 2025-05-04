@@ -10,11 +10,12 @@ Selector de perfil quando o utilizador tem ≥ 2 papéis.
 from __future__ import annotations
 
 from aiogram import F, Router, types
+from aiogram.filters import StateFilter            # ← filtro de estado 3.x
 from aiogram.fsm.context import FSMContext
 
-from bot.menus                     import show_menu
-from bot.menus.ui_helpers          import refresh_menu, close_menu_with_alert
-from bot.states.menu_states        import MenuStates
+from bot.menus            import show_menu
+from bot.menus.ui_helpers import refresh_menu, close_menu_with_alert
+from bot.states.menu_states import MenuStates
 
 router = Router(name="role_choice")
 
@@ -44,11 +45,10 @@ async def ask_role(
         ]
     )
 
-    data          = await state.get_data()
-    prev_msg_id   = data.get("menu_msg_id")      # id do selector anterior (se existir)
+    prev_msg_id = (await state.get_data()).get("menu_msg_id")
 
     # Usa helper genérico: editar ↦ apagar ↦ enviar novo + timeout
-    msg = await refresh_menu(
+    await refresh_menu(
         bot       = bot,
         state     = state,
         chat_id   = chat_id,
@@ -63,19 +63,18 @@ async def ask_role(
 
 # ─────────────────── callback «role:…» ────────────────────
 @router.callback_query(
+    StateFilter(MenuStates.WAIT_ROLE_CHOICE),      # ← filtro de estado (posicional)
     F.data.startswith("role:"),
-    state=MenuStates.WAIT_ROLE_CHOICE,
 )
 async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
-    role   = cb.data.split(":", 1)[1].lower()
-    data   = await state.get_data()
-    roles  = data.get("roles", [])
+    role  = cb.data.split(":", 1)[1].lower()
+    roles = (await state.get_data()).get("roles", [])
 
     if role not in roles:
         await cb.answer("Perfil inválido.", show_alert=True)
         return
 
-    # Pop-up + remoção do selector via helper
+    # Pop-up + remoção do selector
     await close_menu_with_alert(cb, f"✅ Perfil {_label(role)} seleccionado!")
 
     # Actualiza FSM e abre o menu do papel escolhido
