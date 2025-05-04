@@ -2,9 +2,9 @@
 """
 Administrator menu handlers (Aiogram 3.x)
 
-• Full navigation for the Administrator profile
-• “Add User” flow (FSM AddUserFlow)
-• All menu rendering & time-out logic delegated to ui_helpers.refresh_menu
+• Navegação do menu de administrador
+• Fluxo “Adicionar Utilizador” (FSM AddUserFlow)
+• Menu rendering através de ui_helpers.refresh_menu
 """
 
 from __future__ import annotations
@@ -14,10 +14,10 @@ from aiogram.fsm.context import FSMContext
 
 from bot.states.admin_menu_states import AdminMenuStates
 from bot.states.add_user_flow     import AddUserFlow
-from bot.menus.ui_helpers         import (          # central helpers
+from bot.menus.ui_helpers         import (
     back_button,
     cancel_back_kbd,
-    refresh_menu,          # ← NEW composite helper
+    refresh_menu,
     close_menu_with_alert,
 )
 from bot.menus.administrator_menu import (
@@ -26,14 +26,13 @@ from bot.menus.administrator_menu import (
 )
 
 router = Router(name="administrator")
-# (role-filter not required: base state = AdminMenuStates.MAIN)
 
 # ───────────────────────── sub-keyboards ──────────────────────────
 def _agenda_kbd() -> types.InlineKeyboardMarkup:
     return types.InlineKeyboardMarkup(
         inline_keyboard=[
-            [types.InlineKeyboardButton("📆 Geral",          callback_data="agenda:geral")],
-            [types.InlineKeyboardButton("🩺 Fisioterapeuta", callback_data="agenda:fisios")],
+            [types.InlineKeyboardButton(text="📆 Geral",          callback_data="agenda:geral")],
+            [types.InlineKeyboardButton(text="🩺 Fisioterapeuta", callback_data="agenda:fisios")],
             [back_button()],
         ]
     )
@@ -41,8 +40,8 @@ def _agenda_kbd() -> types.InlineKeyboardMarkup:
 def _users_kbd() -> types.InlineKeyboardMarkup:
     return types.InlineKeyboardMarkup(
         inline_keyboard=[
-            [types.InlineKeyboardButton("🔍 Procurar",  callback_data="users:search")],
-            [types.InlineKeyboardButton("➕ Adicionar", callback_data="users:add")],
+            [types.InlineKeyboardButton(text="🔍 Procurar",  callback_data="users:search")],
+            [types.InlineKeyboardButton(text="➕ Adicionar", callback_data="users:add")],
             [back_button()],
         ]
     )
@@ -54,19 +53,15 @@ async def _swap_menu(
     text: str,
     kbd: types.InlineKeyboardMarkup,
 ) -> None:
-    """
-    Wrapper that fetches the current menu_msg_id (if any) and calls
-    ui_helpers.refresh_menu(), which handles edit/delete/send, FSM sync
-    and inactivity timeout – all in one place.
-    """
+    """Obter menu_msg_id actual e delegar em refresh_menu()."""
     target_msg_id = (await state.get_data()).get("menu_msg_id")
     await refresh_menu(
-        bot=cb.bot,
-        state=state,
-        chat_id=cb.message.chat.id,
-        message_id=target_msg_id,
-        text=text,
-        keyboard=kbd,
+        bot       = cb.bot,
+        state     = state,
+        chat_id   = cb.message.chat.id,
+        message_id= target_msg_id,
+        text      = text,
+        keyboard  = kbd,
     )
 
 # ─────────────────── wrappers de navegação ───────────────────
