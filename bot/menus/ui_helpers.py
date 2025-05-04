@@ -2,18 +2,20 @@
 """
 Shared UI helpers for inline-menu handling (Aiogram 3.x).
 
-This module centralises every utility that deals with Telegram message
-life-cycle, keyboards, menu time-outs and clean-up.  It replaces the old
-`bot/menus/common.py` and extends it with new helpers discussed in the
-conversation.
+This module centralises everything related to Telegram message life-cycle,
+inline keyboards, menu time-outs and clean-up.  It supersedes the former
+`bot/menus/common.py` and now also exposes `refresh_menu()`, a composite
+helper that combines edit_menu() + FSM sync + start_menu_timeout().
 
-Exports (see __all__ at the bottom):
-    • back_button()               – back InlineKeyboardButton factory
-    • cancel_back_kbd()           – ReplyKeyboardMarkup for cancel/back
-    • start_menu_timeout()        – auto-hide inactive menus
-    • edit_menu()                 – resilient menu renderer (edit ↦ delete ↦ ZW ↦ new)
-    • close_menu_with_alert()     – show pop-up + erase menu
-    • delete_messages()           – bulk hard / soft delete of arbitrary messages
+Exports
+-------
+• back_button()            – back InlineKeyboardButton factory
+• cancel_back_kbd()        – ReplyKeyboardMarkup for cancel/back
+• start_menu_timeout()     – auto-hide inactive menus
+• edit_menu()              – resilient menu renderer (edit ↦ delete ↦ ZW ↦ new)
+• refresh_menu()           – edit_menu + FSM update + restart timeout  ← NEW
+• close_menu_with_alert()  – pop-up + erase menu
+• delete_messages()        – bulk hard / soft delete of arbitrary messages
 """
 
 from __future__ import annotations
@@ -213,6 +215,44 @@ async def edit_menu(
         disable_notification=True,  # no sound/vibration on client
     )
 
+# ───────────────── composite helper (edit + FSM + timeout) ──────────────
+async def refresh_menu(
+    *,
+    bot: Bot,
+    state: FSMContext,
+    chat_id: int,
+    message_id: int | None,
+    text: str,
+    keyboard: InlineKeyboardMarkup,
+) -> Message:
+    """
+    High-level helper that updates the active menu and keeps FSM in sync.
+
+    Workflow:
+        • Calls edit_menu() to render the new menu.
+        • Updates FSM fields (menu_msg_id, menu_chat_id, menu_ids).
+        • Restarts the inactivity timeout via start_menu_timeout().
+
+    Returns
+    -------
+    Message
+        The final Message object (useful for chaining extra actions).
+    """
+    msg = await edit_menu(
+        bot=bot,
+        chat_id=chat_id,
+        message_id=message_id,
+        text=text,
+        keyboard=keyboard,
+    )
+    await state.update_data(
+        menu_msg_id=msg.message_id,
+        menu_chat_id=chat_id,
+        menu_ids=[msg.message_id],
+    )
+    start_menu_timeout(bot, msg, state)
+    return msg
+
 # ─────────────────────── pop-up + menu removal helper ───────────────────
 async def close_menu_with_alert(
     cb: types.CallbackQuery,
@@ -289,6 +329,7 @@ __all__ = [
     "cancel_back_kbd",
     "start_menu_timeout",
     "edit_menu",
+    "refresh_menu",          # ← NEW
     "close_menu_with_alert",
     "delete_messages",
 ]
