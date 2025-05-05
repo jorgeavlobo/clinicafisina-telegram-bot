@@ -76,7 +76,7 @@ async def _expire_contact_request(bot: types.Bot, chat_id: int, msg_id: int, sta
         await delete_messages(bot, chat_id, msg_id, soft=False)
 
         warn = await bot.send_message(chat_id,
-            "⚠️ Não obtivemos resposta em 60 s. Envie /start para tentar novamente.")
+            "⚠️ Não obtivemos resposta em 60 s. Envie /start (ou Menu > Iniciar) para tentar novamente.")
         await asyncio.sleep(MENU_TIMEOUT)
         with suppress(exceptions.TelegramBadRequest):
             await warn.delete()
@@ -193,7 +193,7 @@ async def confirm_link(cb: types.CallbackQuery, state: FSMContext) -> None:
     await state.clear()
 
     await cb.message.edit_text(
-        f"✅ O utilizador *{first} {last}* foi associado ao seu Telegram. 🎉",
+        f"✅ O utilizador *{first} {last}* foi associado ao seu Telegram 💬",
         parse_mode="Markdown",
     )
     await cb.answer()
