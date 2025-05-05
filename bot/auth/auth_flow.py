@@ -20,14 +20,14 @@ from typing import List, TypedDict
 from aiogram import exceptions, types
 from aiogram.fsm.context import FSMContext
 
-from bot.config                     import MENU_TIMEOUT
-from bot.database                   import queries as q
-from bot.database.connection        import get_pool
-from bot.handlers.role_choice_handlers import ask_role
-from bot.menus                      import show_menu
-from bot.menus.ui_helpers           import delete_messages, close_menu_with_alert
-from bot.states.auth_states         import AuthStates
-from bot.utils.phone                import cleanse
+from bot.config                         import MENU_TIMEOUT
+from bot.database                       import queries as q
+from bot.database.connection            import get_pool
+from bot.handlers.role_choice_handlers  import ask_role
+from bot.menus                          import show_menu
+from bot.menus.ui_helpers               import delete_messages, close_menu_with_alert
+from bot.states.auth_states             import AuthStates
+from bot.utils.phone                    import cleanse
 
 log = logging.getLogger(__name__)
 
@@ -36,43 +36,40 @@ class OnboardingData(TypedDict, total=False):
     db_user_id: str
     first_name: str
     last_name: str
+    phone_digits: str          # ← número partilhado
     roles: List[str]
-    phone_number: str           # ← número que o utilizador partilhou
     confirm_marker: int
     contact_marker: int
     warn_marker: int
     warned_plain_text: bool
     active_role: str
 
-
 # ──────────────── Keyboards ────────────────
 def _contact_kbd() -> types.ReplyKeyboardMarkup:
-    """Botão request_contact."""
+    """Botão `request_contact`."""
     return types.ReplyKeyboardMarkup(
-        keyboard=[[types.KeyboardButton(
-            text="👉🏼📱  ENVIAR CONTACTO  📱👈🏼",
-            request_contact=True,
-        )]],
+        keyboard=[[
+            types.KeyboardButton(
+                text="👉🏼📱  ENVIAR CONTACTO  📱👈🏼",
+                request_contact=True,
+            )
+        ]],
         resize_keyboard=True,
         one_time_keyboard=True,
     )
 
 
 def _confirm_kbd() -> types.InlineKeyboardMarkup:
-    """Inline «✅ Sim / ❌ Não» (argumentos nomeados)."""
-    return types.InlineKeyboardMarkup(
-        inline_keyboard=[[(
-            types.InlineKeyboardButton(
-                text="✅ Sim",
-                callback_data="link_yes",
-            ),
-            types.InlineKeyboardButton(
-                text="❌ Não",
-                callback_data="link_no",
-            ),
-        )]]
+    """Inline “✅ Sim / ❌ Não” – lista de botões, *não* tuplos."""
+    yes_btn = types.InlineKeyboardButton(
+        text="✅ Sim",
+        callback_data="link_yes",
     )
-
+    no_btn = types.InlineKeyboardButton(
+        text="❌ Não",
+        callback_data="link_no",
+    )
+    return types.InlineKeyboardMarkup(inline_keyboard=[[yes_btn, no_btn]])
 
 # ─────────────────── helpers ────────────────────
 async def _purge_warning(bot: types.Bot, chat_id: int, data: OnboardingData) -> None:
@@ -89,12 +86,7 @@ async def _ensure_contact_prompt(
 ) -> None:
     """
     Garante que existe exactamente **um** prompt «ENVIAR CONTACTO».
-
-    • Remove o prompt antigo, se existir;
-    • Envia um novo prompt;
-    • Actualiza contact_marker e reinicia o timeout.
-
-    ⚠️  Não remove a mensagem-aviso para que continue visível.
+    Não remove a mensagem-aviso (fica visível).
     """
     data = await state.get_data()
     old_prompt = data.get("contact_marker")
@@ -113,7 +105,6 @@ async def _ensure_contact_prompt(
     asyncio.create_task(
         _expire_contact_request(bot, chat_id, prompt.message_id, state)
     )
-
 
 # ───────── helpers: timeouts ──────────
 async def _expire_contact_request(
@@ -154,7 +145,7 @@ async def _expire_confirm(
     msg_id: int,
     state: FSMContext,
 ) -> None:
-    """Timeout da confirmação «Sim/Não»."""
+    """Timeout da confirmação “Sim/Não”."""
     try:
         await asyncio.sleep(MENU_TIMEOUT)
         if (await state.get_data()).get("confirm_marker") != msg_id:
@@ -174,7 +165,6 @@ async def _expire_confirm(
     except Exception:
         log.exception("Erro no timeout de confirmação")
 
-
 # ──────────────── Handlers ────────────────
 async def start_onboarding(msg: types.Message, state: FSMContext) -> None:
     """Passo 1 – pede o contacto."""
@@ -185,10 +175,9 @@ async def start_onboarding(msg: types.Message, state: FSMContext) -> None:
 async def reject_plain_text(msg: types.Message, state: FSMContext) -> None:
     """
     O utilizador escreveu texto enquanto aguardamos o contacto.
-
     • Apaga a mensagem;
     • Mostra o aviso apenas **uma vez**;
-    • Re-exibe o prompt (sem remover o aviso).
+    • Re-exibe o prompt.
     """
     with suppress(exceptions.TelegramBadRequest):
         await msg.delete()
@@ -212,7 +201,7 @@ async def handle_contact(msg: types.Message, state: FSMContext) -> None:
     """Recebe o contacto e procura utilizador na BD."""
     phone_digits = cleanse(msg.contact.phone_number)
 
-    # Fecha o teclado
+    # fecha o teclado
     await msg.answer("👍 Obrigado!", reply_markup=types.ReplyKeyboardRemove())
 
     data: OnboardingData = await state.get_data()
@@ -236,7 +225,7 @@ async def handle_contact(msg: types.Message, state: FSMContext) -> None:
         db_user_id=str(user["user_id"]),
         first_name=user["first_name"],
         last_name=user["last_name"],
-        phone_number=phone_digits,          # ← guardamos o nº confirmado
+        phone_digits=phone_digits,       # ← guardamos para o passo seguinte
     )
     await state.set_state(AuthStates.CONFIRMING_LINK)
 
@@ -254,10 +243,10 @@ async def handle_contact(msg: types.Message, state: FSMContext) -> None:
 
 
 async def confirm_link(cb: types.CallbackQuery, state: FSMContext) -> None:
-    """Botão ✅ Sim – associa Telegram-ID e abre o menu adequado."""
+    """Botão ✅ Sim – associa Telegram-ID a *um* número de telefone."""
     data: OnboardingData = await state.get_data()
     user_id      = data.get("db_user_id")
-    phone_digits = data.get("phone_number")
+    phone_digits = data.get("phone_digits")
 
     if not user_id or not phone_digits:
         await cb.answer("Sessão expirada. Envie /start novamente.", show_alert=True)
@@ -272,7 +261,7 @@ async def confirm_link(cb: types.CallbackQuery, state: FSMContext) -> None:
     await state.clear()
 
     await cb.message.edit_text(
-        f"✅ O utilizador *{first} {last}* foi associado ao seu Telegram 💬",
+        f"✅ O utilizador *{first} {last}* foi associado ao seu Telegram. 💬",
         parse_mode="Markdown",
     )
     await cb.answer()
