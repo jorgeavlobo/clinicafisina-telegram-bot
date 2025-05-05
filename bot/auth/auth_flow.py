@@ -39,12 +39,12 @@ class OnboardingData(TypedDict, total=False):
     roles: List[str]
     confirm_marker: int
     contact_marker: int
-    warned_plain_text: bool      # ← novo – evita spam do aviso
+    warn_marker: int            # ← id da mensagem-aviso
+    warned_plain_text: bool
     active_role: str
 
 # ──────────────── Keyboards ────────────────
 def _contact_kbd() -> types.ReplyKeyboardMarkup:
-    """Botão *request_contact*."""
     return types.ReplyKeyboardMarkup(
         keyboard=[[
             types.KeyboardButton(
@@ -58,7 +58,6 @@ def _contact_kbd() -> types.ReplyKeyboardMarkup:
 
 
 def _confirm_kbd() -> types.InlineKeyboardMarkup:
-    """Teclado inline “✅ Sim / ❌ Não”."""
     return types.InlineKeyboardMarkup(
         inline_keyboard=[[
             types.InlineKeyboardButton(text="✅ Sim", callback_data="link_yes"),
@@ -67,24 +66,34 @@ def _confirm_kbd() -> types.InlineKeyboardMarkup:
     )
 
 # ─────────────────── helpers ────────────────────
+async def _purge_warning(bot: types.Bot, chat_id: int, data: OnboardingData) -> None:
+    """Apaga mensagem-aviso, se existir e ainda não foi removida."""
+    warn = data.get("warn_marker")
+    if warn:
+        await delete_messages(bot, chat_id, warn, soft=False)
+
 async def _ensure_contact_prompt(
     bot: types.Bot,
     chat_id: int,
     state: FSMContext,
 ) -> None:
     """
-    Garante que existe exactamente **um** prompt com botão «ENVIAR CONTACTO».
+    Garante que existe exactamente **um** prompt «ENVIAR CONTACTO».
 
-    • Apaga o anterior (se existir).
-    • Envia um novo com ReplyKeyboardMarkup.
-    • Actualiza contact_marker e reinicia o timeout.
+    Remove prompt e aviso antigos (se existirem), envia novo prompt,
+    actualiza marcador e reinicia timeout.
     """
     data = await state.get_data()
-    old_marker = data.get("contact_marker")
 
-    if old_marker:
-        await delete_messages(bot, chat_id, old_marker, soft=False)
+    # limpa aviso antigo
+    await _purge_warning(bot, chat_id, data)
 
+    # limpa prompt antigo
+    old_prompt = data.get("contact_marker")
+    if old_prompt:
+        await delete_messages(bot, chat_id, old_prompt, soft=False)
+
+    # novo prompt
     prompt = await bot.send_message(
         chat_id,
         "*Precisamos confirmar o seu número.*\n"
@@ -114,8 +123,10 @@ async def _expire_contact_request(
         if data.get("contact_marker") != msg_id or not waiting:
             return
 
-        await state.clear()
+        # limpa tudo
+        await _purge_warning(bot, chat_id, data)
         await delete_messages(bot, chat_id, msg_id, soft=False)
+        await state.clear()
 
         warn = await bot.send_message(
             chat_id,
@@ -164,22 +175,22 @@ async def start_onboarding(msg: types.Message, state: FSMContext) -> None:
 async def reject_plain_text(msg: types.Message, state: FSMContext) -> None:
     """
     O utilizador escreveu texto enquanto aguardamos o contacto.
-
-    • Apaga a mensagem dele.
-    • Mostra aviso apenas **uma vez** por sessão.
-    • Re-exibe o botão de contacto.
+    Apaga a mensagem, mostra aviso **uma vez** e volta a exibir o botão.
     """
     with suppress(exceptions.TelegramBadRequest):
         await msg.delete()
 
     data: OnboardingData = await state.get_data()
     if not data.get("warned_plain_text"):
-        await msg.answer(
+        warn = await msg.answer(
             "❗ Por favor, NÃO escreva o número manualmente.\n"
             "Toque no botão *ENVIAR CONTACTO* para continuar.",
             parse_mode="Markdown",
         )
-        await state.update_data(warned_plain_text=True)
+        await state.update_data(
+            warned_plain_text=True,
+            warn_marker=warn.message_id,
+        )
 
     await _ensure_contact_prompt(msg.bot, msg.chat.id, state)
 
@@ -191,19 +202,19 @@ async def handle_contact(msg: types.Message, state: FSMContext) -> None:
     # fecha o teclado
     await msg.answer("👍 Obrigado!", reply_markup=types.ReplyKeyboardRemove())
 
-    # limpa prompt
-    marker = (await state.get_data()).get("contact_marker")
-    if marker:
-        await delete_messages(msg.bot, msg.chat.id, marker, soft=False)
+    data: OnboardingData = await state.get_data()
+    # limpa prompt e aviso
+    await _purge_warning(msg.bot, msg.chat.id, data)
+    prompt = data.get("contact_marker")
+    if prompt:
+        await delete_messages(msg.bot, msg.chat.id, prompt, soft=False)
 
     pool = await get_pool()
     user = await q.get_user_by_phone(pool, phone_digits)
 
     if not user:
         await state.clear()
-        await msg.answer(
-            "Número não encontrado. Assim que o seu perfil for criado avisaremos 🙏"
-        )
+        await msg.answer("Número não encontrado. Assim que o seu perfil for criado avisaremos 🙏")
         return
 
     await state.update_data(
