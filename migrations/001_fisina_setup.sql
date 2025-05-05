@@ -30,9 +30,9 @@ SET search_path = public;
 ------------------------------------------------------------------
 -- 3. Extensões (uma vez por BD)
 ------------------------------------------------------------------
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";   -- uuid_generate_v4()
-CREATE EXTENSION IF NOT EXISTS pgcrypto;      -- gen_random_uuid()
-CREATE EXTENSION IF NOT EXISTS citext;        -- e-mail case-insensitive
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS citext;
 
 ------------------------------------------------------------------
 -- 4. Privilegios & defaults
@@ -47,7 +47,7 @@ ALTER DEFAULT PRIVILEGES GRANT ALL ON TYPES     TO jorgeavlobo;
 ------------------------------------------------------------------
 -- 5. Utilitários genéricos
 ------------------------------------------------------------------
-/* timestamp de audit ------------------------ */
+/* 5.1 updated_at trigger ---------------------------------------- */
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -56,15 +56,17 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-/* helper para ligar telegram_user_id de forma idempotente */
-CREATE OR REPLACE FUNCTION link_telegram(p_user UUID, p_tgid BIGINT)
-RETURNS VOID AS $$
-INSERT INTO users(user_id, telegram_user_id)
-VALUES (p_user, p_tgid)
-ON CONFLICT (telegram_user_id)
-    WHERE telegram_user_id IS NOT NULL
-DO UPDATE
-      SET user_id = EXCLUDED.user_id;
+/* 5.2 helper para ligar telegram_user_id ao número de telefone --- */
+CREATE OR REPLACE FUNCTION link_telegram(
+        p_user UUID,
+        p_phone VARCHAR,
+        p_tgid BIGINT
+) RETURNS VOID AS $$
+INSERT INTO user_phones (user_id, phone_number, telegram_user_id)
+VALUES (p_user, p_phone, p_tgid)
+ON CONFLICT (phone_number)
+    DO UPDATE SET telegram_user_id = EXCLUDED.telegram_user_id,
+                  updated_at       = now();
 $$ LANGUAGE sql;
 
 ------------------------------------------------------------------
@@ -76,11 +78,12 @@ CREATE TABLE IF NOT EXISTS users (
     user_id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     first_name          VARCHAR(100) NOT NULL,
     last_name           VARCHAR(100) NOT NULL,
+    date_of_birth       DATE,
 
-    telegram_user_id    BIGINT UNIQUE,
-    tax_id_number       VARCHAR(30) UNIQUE,        -- NIF/VAT
-    moloni_customer_id  INTEGER UNIQUE,            -- ligação a Moloni
+    tax_id_number       VARCHAR(30) UNIQUE,
+    moloni_customer_id  INTEGER UNIQUE,
 
+    created_by          UUID REFERENCES users(user_id),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -122,14 +125,12 @@ CREATE TABLE IF NOT EXISTS user_emails (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT chk_user_emails_format
-        CHECK (email ~* '^[^@]+@[^@]+\\.[a-z]{2,}$')
+        CHECK (email ~* '^[^@]+@[^@]+\.[a-z0-9]{2,}$')
 );
 
-/* cada utilizador não pode repetir o mesmo e-mail */
 CREATE UNIQUE INDEX IF NOT EXISTS ux_user_emails_per_user
     ON user_emails(user_id, email);
 
-/* garantir um e apenas um principal por user (partial unique) */
 CREATE UNIQUE INDEX IF NOT EXISTS ux_user_emails_primary
     ON user_emails(user_id)
     WHERE is_primary;
@@ -140,22 +141,25 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 /* 6.5 PHONES ------------------------------------------------------ */
 CREATE TABLE IF NOT EXISTS user_phones (
-    phone_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id      UUID NOT NULL
+    phone_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID NOT NULL
         REFERENCES users(user_id) ON DELETE CASCADE,
-    phone_number VARCHAR(20) NOT NULL,
-    is_primary   BOOLEAN NOT NULL DEFAULT FALSE,
+    phone_number      VARCHAR(20) NOT NULL,
+    telegram_user_id  BIGINT UNIQUE,
+    is_primary        BOOLEAN NOT NULL DEFAULT FALSE,
 
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT chk_user_phones_format
         CHECK (phone_number ~ '^[1-9][0-9]{6,14}$')
 );
 
-/* mesmo nº não pode aparecer duas vezes para o mesmo user */
 CREATE UNIQUE INDEX IF NOT EXISTS ux_user_phones_per_user
     ON user_phones(user_id, phone_number);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_phones_telegram_uid
+    ON user_phones(telegram_user_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_user_phones_primary
     ON user_phones(user_id)
@@ -298,5 +302,5 @@ JOIN   roles r USING(role_id)
 GROUP  BY u.user_id;
 
 ------------------------------------------------------------------
--- Feito!            psql  -d fisina  -f fisina_setup_v2.sql
+-- Feito!            psql  -d fisina  -f 001_fisina_setup.sql
 ------------------------------------------------------------------
