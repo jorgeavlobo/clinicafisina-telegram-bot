@@ -57,11 +57,11 @@ def _contact_kbd() -> types.ReplyKeyboardMarkup:
 
 
 def _confirm_kbd() -> types.InlineKeyboardMarkup:
-    """Inline “✅ Sim / ❌ Não”."""
+    """Inline “✅ Sim / ❌ Não” — argumentos *nomeados*."""
     return types.InlineKeyboardMarkup(
         inline_keyboard=[[
-            types.InlineKeyboardButton("✅ Sim", callback_data="link_yes"),
-            types.InlineKeyboardButton("❌ Não", callback_data="link_no"),
+            types.InlineKeyboardButton(text="✅ Sim", callback_data="link_yes"),
+            types.InlineKeyboardButton(text="❌ Não", callback_data="link_no"),
         ]]
     )
 
