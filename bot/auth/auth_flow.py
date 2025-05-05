@@ -48,7 +48,7 @@ class OnboardingData(TypedDict, total=False):
 # ──────────────────────── Reply / Inline keyboards ────────────────────────
 def _contact_kbd() -> types.ReplyKeyboardMarkup:
     return types.ReplyKeyboardMarkup(
-        keyboard=[[types.KeyboardButton(text="👉🏼 Carrega Aqui 👈🏼", request_contact=True)]],
+        keyboard=[[types.KeyboardButton(text="👉🏼 👉🏼 *CARREGA AQUI* 👈🏼 👈🏼", request_contact=True)]],
         resize_keyboard=True,
         one_time_keyboard=True,
     )
