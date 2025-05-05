@@ -5,7 +5,7 @@ Fluxo de onboarding/autenticação (Aiogram 3).
 • /start               → start_onboarding()
 • Contacto partilhado  → handle_contact()
 • Confirmação “Sim/Não” com timeout MENU_TIMEOUT
-• “✅ Sim”   → confirm_link()   – associa Telegram ID e abre menu
+• “✅ Sim”   → confirm_link()   – associa Telegram-ID e abre menu
 • “❌ Não”   → cancel_link()    – aborta o processo
 """
 
@@ -71,20 +71,16 @@ async def _expire_contact_request(
     msg_id: int,
     state: FSMContext,
 ) -> None:
-    """
-    Se o utilizador não partilhar contacto dentro de MENU_TIMEOUT,
-    remove o teclado e informa para recomeçar.
-    """
+    """Se o utilizador não partilhar contacto em MENU_TIMEOUT, encerra o prompt."""
     try:
         await asyncio.sleep(MENU_TIMEOUT)
 
         data: OnboardingData = await state.get_data()
-        # se contact_marker mudou ou o estado já avançou, não faz nada
-        if data.get("contact_marker") != msg_id or await state.get_state() != AuthStates.WAITING_CONTACT.state:
+        waiting = await state.get_state() == AuthStates.WAITING_CONTACT.state
+        if data.get("contact_marker") != msg_id or not waiting:
             return
 
         await state.clear()
-
         await delete_messages(bot, chat_id, msg_id, soft=False)
 
         warn = await bot.send_message(
@@ -98,13 +94,14 @@ async def _expire_contact_request(
     except Exception:
         log.exception("Erro no timeout do pedido de contacto")
 
+
 async def _expire_confirm(
     bot: types.Bot,
     chat_id: int,
     msg_id: int,
     state: FSMContext,
 ) -> None:
-    """Timeout da confirmação “Sim/Não” (já existia)."""
+    """Timeout da confirmação “Sim/Não”."""
     try:
         await asyncio.sleep(MENU_TIMEOUT)
 
@@ -137,12 +134,12 @@ async def start_onboarding(msg: types.Message, state: FSMContext) -> None:
         reply_markup=_contact_kbd(),
     )
 
-    # guarda ID para possível timeout
     await state.update_data(contact_marker=contact_prompt.message_id)
 
-    # inicia timeout
     asyncio.create_task(
-        _expire_contact_request(msg.bot, contact_prompt.chat.id, contact_prompt.message_id, state)
+        _expire_contact_request(
+            msg.bot, contact_prompt.chat.id, contact_prompt.message_id, state
+        )
     )
 
 
@@ -153,7 +150,13 @@ async def handle_contact(msg: types.Message, state: FSMContext) -> None:
     pool = await get_pool()
     user = await q.get_user_by_phone(pool, phone_digits)
 
+    # fecha o teclado de contacto
     await msg.answer("👍 Obrigado!", reply_markup=types.ReplyKeyboardRemove())
+
+    # remove a mensagem-prompt original para manter o chat limpo
+    contact_marker = (await state.get_data()).get("contact_marker")
+    if contact_marker:
+        await delete_messages(msg.bot, msg.chat.id, contact_marker, soft=False)
 
     if not user:
         await state.clear()
@@ -184,7 +187,7 @@ async def handle_contact(msg: types.Message, state: FSMContext) -> None:
 
 
 async def confirm_link(cb: types.CallbackQuery, state: FSMContext) -> None:
-    """Botão ✅ Sim – associa Telegram ID e abre o menu apropriado."""
+    """Botão ✅ Sim – associa Telegram-ID e abre o menu apropriado."""
     data: OnboardingData = await state.get_data()
     user_id = data.get("db_user_id")
     if not user_id:
