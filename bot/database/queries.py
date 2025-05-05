@@ -1,10 +1,14 @@
 # bot/database/queries.py
 """
-Operações CRUD de alto e baixo nível para PostgreSQL via asyncpg.
+Operações CRUD (asyncpg) para a base de dados Fisina.
 
-• Mantém as funções originais usadas por autenticação e middleware.
-• Acrescenta add_user() — cria utilizador completo (role, email, telefone).
-• date_of_birth agora opcional (None).
+Principais mudanças (maio / 2025)
+─────────────────────────────────
+• `telegram_user_id` foi movido de *users* → *user_phones*.
+  - get_user_by_telegram_id() faz agora JOIN a user_phones.
+  - link_telegram_id() actualiza user_phones em vez de users.
+
+• API externa inalterada — chamadas existentes continuam a funcionar.
 """
 
 from __future__ import annotations
@@ -15,20 +19,34 @@ from datetime import date
 from asyncpg import Pool, Record
 
 
-# ───────────────────────── helpers internos ─────────────────────────
+# ─────────────────────── helpers internos ────────────────────────
 def _to_dict(rec: Record | None) -> Optional[Dict[str, Any]]:
+    """Converte Record → dict ou devolve None."""
     return dict(rec) if rec else None
 
 
-# ───────────────────────── consultas de leitura ─────────────────────────
+# ─────────────────────── consultas de leitura ─────────────────────
 async def get_user_by_telegram_id(pool: Pool, tg_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Devolve o utilizador associado a *tg_id* (JOIN a user_phones).
+    """
     rec = await pool.fetchrow(
-        "SELECT * FROM users WHERE telegram_user_id = $1", tg_id
+        """
+        SELECT u.*
+        FROM   users u
+        JOIN   user_phones p USING (user_id)
+        WHERE  p.telegram_user_id = $1
+        LIMIT  1
+        """,
+        tg_id,
     )
     return _to_dict(rec)
 
 
 async def get_user_by_phone(pool: Pool, phone_digits: str) -> Optional[Dict[str, Any]]:
+    """
+    Procura utilizador através do número de telefone normalizado.
+    """
     rec = await pool.fetchrow(
         """
         SELECT u.*
@@ -44,12 +62,18 @@ async def get_user_by_phone(pool: Pool, phone_digits: str) -> Optional[Dict[str,
 
 async def link_telegram_id(pool: Pool, user_id: str, tg_id: int) -> None:
     """
-    Liga telegram_user_id a um utilizador, de forma idempotente.
+    Associa (ou actualiza) *telegram_user_id* aos números de telefone do utilizador.
+
+    ⚠️  Mantém a assinatura compatível:
+        – actualiza todos os registos desse user onde telegram_user_id está NULL
+          (ou já é o próprio *tg_id*).
+        – respeita a restrição UNIQUE da coluna.
     """
     await pool.execute(
         """
-        UPDATE users
-        SET    telegram_user_id = $2
+        UPDATE user_phones
+        SET    telegram_user_id = $2,
+               updated_at       = now()
         WHERE  user_id = $1
           AND (telegram_user_id IS NULL OR telegram_user_id = $2)
         """,
@@ -58,26 +82,32 @@ async def link_telegram_id(pool: Pool, user_id: str, tg_id: int) -> None:
 
 
 async def get_user_roles(pool: Pool, user_id: str) -> list[str]:
+    """
+    Lista de roles (lower-case) atribuídas ao utilizador.
+    """
     rows = await pool.fetch(
         """
         SELECT r.role_name
         FROM   user_roles ur
         JOIN   roles  r USING (role_id)
         WHERE  ur.user_id = $1
-        ORDER  BY lower(r.role_name);
+        ORDER  BY lower(r.role_name)
         """,
         user_id,
     )
     return [row["role_name"].lower() for row in rows]
 
 
-# ───────────────────────── inserções granulares ─────────────────────────
+# ───────────────────── inserções granulares ──────────────────────
 async def create_user(
     pool: Pool,
     first_name: str,
     last_name: str,
     tax_id: Optional[str] = None,
 ) -> str:
+    """
+    Cria registo na tabela *users* (campos mínimos).
+    """
     rec = await pool.fetchrow(
         """
         INSERT INTO users (first_name, last_name, tax_id_number)
@@ -125,15 +155,18 @@ async def add_phone(
     pool: Pool,
     user_id: str,
     phone_number: str,
+    *,
     is_primary: bool = False,
+    telegram_user_id: Optional[int] = None,
 ) -> None:
     await pool.execute(
         """
-        INSERT INTO user_phones (user_id, phone_number, is_primary)
-        VALUES ($1, $2, $3)
-        ON CONFLICT DO NOTHING
+        INSERT INTO user_phones
+              (user_id, phone_number, is_primary, telegram_user_id)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (phone_number) DO NOTHING
         """,
-        user_id, phone_number, is_primary,
+        user_id, phone_number, is_primary, telegram_user_id,
     )
 
 
@@ -161,7 +194,7 @@ async def add_address(
     )
 
 
-# ───────────────────────── inserção “tudo-em-um” ─────────────────────────
+# ───────────── inserção “tudo-em-um” (utilitário) ────────────────
 async def add_user(
     pool: Pool,
     *,
@@ -172,10 +205,10 @@ async def add_user(
     phone_cc: str,
     phone: str,
     email: str,
-    created_by: Optional[str] = None,          # ← agora opcional
+    created_by: Optional[str] = None,
 ) -> str:
     """
-    Cria utilizador + role + e-mail + telefone primários.
+    Cria utilizador + role + email + telefone (todos primários).
     Devolve o user_id (UUID).
     """
     async with pool.acquire() as conn, conn.transaction():
@@ -189,7 +222,8 @@ async def add_user(
         )
 
         role_id = await conn.fetchval(
-            "SELECT role_id FROM roles WHERE role_name=$1", role
+            "SELECT role_id FROM roles WHERE role_name = $1",
+            role,
         )
         if role_id:
             await conn.execute(
