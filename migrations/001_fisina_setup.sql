@@ -1,6 +1,7 @@
 -- ======================================================================
---  Setup script for database  F I S I N A           (v2 – 2025-04-23)
---  Includes all refinements: UTC, UUID PKs, updated_at, constraints …
+--  Setup script for database  F I S I N A           (v2 – 2025-05-05)
+--  Inclui todos os refinamentos: UTC, UUID PKs, updated_at, constraints
+--  e suporte para vários telegram_user_id (um por nº de telefone)
 -- ======================================================================
 
 ------------------------------------------------------------------
@@ -30,12 +31,12 @@ SET search_path = public;
 ------------------------------------------------------------------
 -- 3. Extensões (uma vez por BD)
 ------------------------------------------------------------------
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-CREATE EXTENSION IF NOT EXISTS citext;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";   -- uuid_generate_v4()
+CREATE EXTENSION IF NOT EXISTS pgcrypto;      -- gen_random_uuid()
+CREATE EXTENSION IF NOT EXISTS citext;        -- e-mail case-insensitive
 
 ------------------------------------------------------------------
--- 4. Privilegios & defaults
+-- 4. Privilégios & defaults
 ------------------------------------------------------------------
 GRANT ALL ON SCHEMA public TO jorgeavlobo;
 
@@ -58,15 +59,16 @@ $$ LANGUAGE plpgsql;
 
 /* 5.2 helper para ligar telegram_user_id ao número de telefone --- */
 CREATE OR REPLACE FUNCTION link_telegram(
-        p_user UUID,
+        p_user  UUID,
         p_phone VARCHAR,
-        p_tgid BIGINT
+        p_tgid  BIGINT
 ) RETURNS VOID AS $$
 INSERT INTO user_phones (user_id, phone_number, telegram_user_id)
 VALUES (p_user, p_phone, p_tgid)
-ON CONFLICT (phone_number)
-    DO UPDATE SET telegram_user_id = EXCLUDED.telegram_user_id,
-                  updated_at       = now();
+ON CONFLICT (user_id, phone_number)               -- índice UX já existe
+DO UPDATE
+      SET telegram_user_id = EXCLUDED.telegram_user_id,
+          updated_at       = now();
 $$ LANGUAGE sql;
 
 ------------------------------------------------------------------
@@ -80,8 +82,8 @@ CREATE TABLE IF NOT EXISTS users (
     last_name           VARCHAR(100) NOT NULL,
     date_of_birth       DATE,
 
-    tax_id_number       VARCHAR(30) UNIQUE,
-    moloni_customer_id  INTEGER UNIQUE,
+    tax_id_number       VARCHAR(30) UNIQUE,        -- NIF/VAT
+    moloni_customer_id  INTEGER UNIQUE,            -- ligação a Moloni
 
     created_by          UUID REFERENCES users(user_id),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -145,7 +147,7 @@ CREATE TABLE IF NOT EXISTS user_phones (
     user_id           UUID NOT NULL
         REFERENCES users(user_id) ON DELETE CASCADE,
     phone_number      VARCHAR(20) NOT NULL,
-    telegram_user_id  BIGINT UNIQUE,
+    telegram_user_id  BIGINT,                    -- UNIQUE via índice abaixo
     is_primary        BOOLEAN NOT NULL DEFAULT FALSE,
 
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -155,12 +157,15 @@ CREATE TABLE IF NOT EXISTS user_phones (
         CHECK (phone_number ~ '^[1-9][0-9]{6,14}$')
 );
 
+/* mesmo nº não pode aparecer duas vezes para o mesmo user */
 CREATE UNIQUE INDEX IF NOT EXISTS ux_user_phones_per_user
     ON user_phones(user_id, phone_number);
 
+/* cada telegram_user_id só pode existir uma vez na tabela */
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_phones_telegram_uid
     ON user_phones(telegram_user_id);
 
+/* um único nº principal por utilizador */
 CREATE UNIQUE INDEX IF NOT EXISTS ux_user_phones_primary
     ON user_phones(user_id)
     WHERE is_primary;
@@ -291,7 +296,7 @@ INSERT INTO roles(role_name) VALUES
 ON CONFLICT DO NOTHING;
 
 ------------------------------------------------------------------
--- 8. Vistas auxiliares (faculta-tivo)
+-- 8. Vistas auxiliares (facultativo)
 ------------------------------------------------------------------
 CREATE OR REPLACE VIEW v_user_roles AS
 SELECT u.user_id,
@@ -302,5 +307,5 @@ JOIN   roles r USING(role_id)
 GROUP  BY u.user_id;
 
 ------------------------------------------------------------------
--- Feito!            psql  -d fisina  -f 001_fisina_setup.sql
+-- Feito!  psql -U jorgeavlobo -f migrations/001_fisina_setup.sql
 ------------------------------------------------------------------
