@@ -2,13 +2,11 @@
 """
 Fluxo de onboarding/autenticação (Aiogram 3).
 
-• /start chama start_onboarding() quando o utilizador ainda não está
-  ligado ao perfil da base de dados.
-• O utilizador partilha o contacto → handle_contact()
-    – Se não existir, informa-o e termina.
-    – Se existir, pergunta “É você? (Sim/Não)” e coloca timeout de MENU_TIMEOUT.
-• “✅ Sim” → confirm_link()   – associa telegram_user_id e abre menu.
-• “❌ Não” → cancel_link()    – aborta o processo.
+• /start               → start_onboarding()
+• Contacto partilhado  → handle_contact()
+• Confirmação “Sim/Não” com timeout MENU_TIMEOUT
+• “✅ Sim”   → confirm_link()   – associa Telegram ID e abre menu
+• “❌ Não”   → cancel_link()    – aborta o processo
 """
 
 from __future__ import annotations
@@ -21,22 +19,18 @@ from typing import List, TypedDict
 from aiogram import exceptions, types
 from aiogram.fsm.context import FSMContext
 
-from bot.config                   import MENU_TIMEOUT           # ← usa o mesmo TTL
-from bot.database                 import queries as q
-from bot.database.connection      import get_pool
+from bot.config                  import MENU_TIMEOUT
+from bot.database                import queries as q
+from bot.database.connection     import get_pool
 from bot.handlers.role_choice_handlers import ask_role
-from bot.menus                    import show_menu
-from bot.menus.ui_helpers         import (
-    delete_messages,
-    close_menu_with_alert,
-)
-from bot.states.auth_states       import AuthStates
-from bot.states.menu_states       import MenuStates
-from bot.utils.phone              import cleanse
+from bot.menus                   import show_menu
+from bot.menus.ui_helpers        import delete_messages, close_menu_with_alert
+from bot.states.auth_states      import AuthStates
+from bot.utils.phone             import cleanse
 
 log = logging.getLogger(__name__)
 
-# ──────────────── FSM typing (melhora auto-completar / mypy) ────────────────
+# ──────────────── FSM typing ────────────────
 class OnboardingData(TypedDict, total=False):
     db_user_id: str
     roles: List[str]
@@ -45,12 +39,13 @@ class OnboardingData(TypedDict, total=False):
     menu_chat_id: int
     active_role: str
 
-# ──────────────────────── Reply / Inline keyboards ────────────────────────
+# ──────────────── Keyboards ────────────────
 def _contact_kbd() -> types.ReplyKeyboardMarkup:
+    """Teclado com botão para partilhar contacto (request_contact=True)."""
     return types.ReplyKeyboardMarkup(
         keyboard=[[
             types.KeyboardButton(
-                text="👉🏼 👉🏼 ENVIAR CONTACTO 👈🏼 👈🏼,
+                text="👉🏼📱  ENVIAR CONTACTO  📱👈🏼",
                 request_contact=True,
             )
         ]],
@@ -60,6 +55,7 @@ def _contact_kbd() -> types.ReplyKeyboardMarkup:
 
 
 def _confirm_kbd() -> types.InlineKeyboardMarkup:
+    """Teclado inline “✅ Sim / ❌ Não” para confirmar o utilizador encontrado."""
     return types.InlineKeyboardMarkup(
         inline_keyboard=[[
             types.InlineKeyboardButton(text="✅ Sim", callback_data="link_yes"),
@@ -67,7 +63,7 @@ def _confirm_kbd() -> types.InlineKeyboardMarkup:
         ]]
     )
 
-# ───────────────── helper: timeout do “Sim/Não” ───────────────────────────
+# ───────────── helper: timeout confirmação ─────────────
 async def _expire_confirm(
     bot: types.Bot,
     chat_id: int,
@@ -75,19 +71,19 @@ async def _expire_confirm(
     state: FSMContext,
 ) -> None:
     """
-    Remove o teclado de confirmação após MENU_TIMEOUT segundos
-    e avisa o utilizador para recomeçar caso ainda não tenha respondido.
+    Remove o teclado “Sim/Não” após MENU_TIMEOUT segundos
+    e avisa o utilizador para recomeçar se não respondeu.
     """
     try:
         await asyncio.sleep(MENU_TIMEOUT)
 
         data: OnboardingData = await state.get_data()
-        if data.get("confirm_marker") != msg_id:     # já validou / cancelou
+        if data.get("confirm_marker") != msg_id:  # já respondeu
             return
 
         await state.clear()
 
-        # tenta apagar completamente; se não conseguir, remove teclado
+        # tenta apagar a mensagem; se não conseguir, remove o teclado
         await delete_messages(bot, chat_id, msg_id, soft=False)
 
         warn = await bot.send_message(
@@ -100,9 +96,9 @@ async def _expire_confirm(
     except Exception:
         log.exception("Erro no timeout de confirmação")
 
-# ───────────────────────────── Handlers ─────────────────────────────
+# ──────────────── Handlers ────────────────
 async def start_onboarding(msg: types.Message, state: FSMContext) -> None:
-    """Passo 1 – pedir o número de telefone."""
+    """Passo 1 – pedir o número de telefone ao utilizador."""
     await state.set_state(AuthStates.WAITING_CONTACT)
     await msg.answer(
         "*Precisamos confirmar o seu número.*\n"
@@ -113,7 +109,7 @@ async def start_onboarding(msg: types.Message, state: FSMContext) -> None:
 
 
 async def handle_contact(msg: types.Message, state: FSMContext) -> None:
-    """Recebe Contact e procura utilizador pelo número limpo."""
+    """Recebe Contact e procura utilizador pelo número normalizado."""
     phone_digits = cleanse(msg.contact.phone_number)
 
     pool = await get_pool()
@@ -128,7 +124,7 @@ async def handle_contact(msg: types.Message, state: FSMContext) -> None:
         )
         return
 
-    # Guarda user_id na FSM
+    # Guarda user_id na FSM para o passo seguinte
     await state.update_data(db_user_id=str(user["user_id"]))
     await state.set_state(AuthStates.CONFIRMING_LINK)
 
@@ -138,7 +134,7 @@ async def handle_contact(msg: types.Message, state: FSMContext) -> None:
         parse_mode="Markdown",
         reply_markup=_confirm_kbd(),
     )
-    await state.update_data(        # type: ignore[arg-type]
+    await state.update_data(           # type: ignore[arg-type]
         confirm_marker=confirm.message_id,
         menu_msg_id=confirm.message_id,
         menu_chat_id=confirm.chat.id,
@@ -150,7 +146,7 @@ async def handle_contact(msg: types.Message, state: FSMContext) -> None:
 
 
 async def confirm_link(cb: types.CallbackQuery, state: FSMContext) -> None:
-    """Handler do botão ✅ Sim – associa Telegram-ID e abre o menu."""
+    """Botão ✅ Sim – associa Telegram-ID e abre o menu apropriado."""
     data: OnboardingData = await state.get_data()
     user_id = data.get("db_user_id")
     if not user_id:
@@ -162,24 +158,23 @@ async def confirm_link(cb: types.CallbackQuery, state: FSMContext) -> None:
     await q.link_telegram_id(pool, user_id, cb.from_user.id)
     roles: List[str] = await q.get_user_roles(pool, user_id)
 
-    # fecha a msg “É você?” e limpa estado transitório
     await state.clear()
     await cb.message.edit_text("Ligação concluída! 🎉")
     await cb.answer()
 
-    # vários perfis → selector de perfil
+    # vários perfis → selector
     if len(roles) > 1:
         await ask_role(cb.bot, cb.message.chat.id, state, roles)
         return
 
-    # um único perfil → entra directo
+    # perfil único → entra directo
     if roles:
         await state.update_data(active_role=roles[0])
     await show_menu(cb.bot, cb.message.chat.id, state, roles)
 
 
 async def cancel_link(cb: types.CallbackQuery, state: FSMContext) -> None:
-    """Handler do botão ❌ Não – aborta o processo."""
+    """Botão ❌ Não – aborta o processo de associação."""
     await state.clear()
     await close_menu_with_alert(
         cb,
