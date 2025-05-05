@@ -48,7 +48,12 @@ class OnboardingData(TypedDict, total=False):
 # ──────────────────────── Reply / Inline keyboards ────────────────────────
 def _contact_kbd() -> types.ReplyKeyboardMarkup:
     return types.ReplyKeyboardMarkup(
-        keyboard=[[types.KeyboardButton(text="👉🏼 👉🏼 *CARREGA AQUI* 👈🏼 👈🏼", request_contact=True)]],
+        keyboard=[[
+            types.KeyboardButton(
+                text="👉🏼 👉🏼 ENVIAR CONTACTO 👈🏼 👈🏼,
+                request_contact=True,
+            )
+        ]],
         resize_keyboard=True,
         one_time_keyboard=True,
     )
@@ -100,7 +105,9 @@ async def start_onboarding(msg: types.Message, state: FSMContext) -> None:
     """Passo 1 – pedir o número de telefone."""
     await state.set_state(AuthStates.WAITING_CONTACT)
     await msg.answer(
-        "Olá! Toque no botão abaixo para partilhar o seu número: 👇🏼",
+        "*Precisamos confirmar o seu número.*\n"
+        "Clique no botão abaixo 👇",
+        parse_mode="Markdown",
         reply_markup=_contact_kbd(),
     )
 
