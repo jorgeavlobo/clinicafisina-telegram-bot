@@ -1,14 +1,9 @@
 # bot/auth/auth_flow.py
 """
-Fluxo de onboarding/autenticação (Aiogram 3).
+Lógica de onboarding/autenticação (Aiogram 3).
 
-• /start               → start_onboarding()
-• Contacto partilhado  → handle_contact()
-• Confirmação “✅ Sim / ❌ Não” com timeout MENU_TIMEOUT
-• Se o utilizador escrever texto enquanto aguardamos o contacto:
-    – a mensagem é apagada;
-    – é mostrado **uma só vez** um aviso para usar o botão;
-    – o botão «ENVIAR CONTACTO» volta a ficar visível.
+Este módulo NÃO cria Router — os handlers são expostos como funções
+públicas e invocados a partir de bot/handlers/auth_handlers.py.
 """
 
 from __future__ import annotations
@@ -18,8 +13,7 @@ import logging
 from contextlib import suppress
 from typing import List, TypedDict
 
-from aiogram import F, Router, exceptions, types
-from aiogram.filters import Command, StateFilter
+from aiogram import exceptions, types
 from aiogram.fsm.context import FSMContext
 
 from bot.config                   import MENU_TIMEOUT
@@ -32,8 +26,6 @@ from bot.states.auth_states       import AuthStates
 from bot.utils.phone              import cleanse
 
 log = logging.getLogger(__name__)
-
-router = Router(name="auth_flow")          # este router deverá ser registado no dispatcher
 
 # ──────────────── FSM typing ────────────────
 class OnboardingData(TypedDict, total=False):
@@ -56,7 +48,7 @@ def _contact_kbd() -> types.ReplyKeyboardMarkup:
             )
         ]],
         resize_keyboard=True,
-        one_time_keyboard=False,        # ← NÃO desaparece se escreverem texto
+        one_time_keyboard=False,
     )
 
 
@@ -70,10 +62,7 @@ def _confirm_kbd() -> types.InlineKeyboardMarkup:
 
 # ───────── helpers ──────────
 async def _ensure_contact_prompt(bot: types.Bot, chat_id: int, state: FSMContext) -> None:
-    """
-    Garante que existe uma mensagem com o botão de partilha de contacto,
-    tentando antes editar a existente.
-    """
+    """(Re)mostra o botão de partilha, editando a mensagem antiga se possível."""
     data       = await state.get_data()
     old_marker = data.get("contact_marker")
     prompt     = None
@@ -148,21 +137,16 @@ async def _expire_confirm(bot: types.Bot, chat_id: int, msg_id: int, state: FSMC
     except Exception:
         log.exception("Erro no timeout de confirmação")
 
-# ──────────────── Handlers ────────────────
-@router.message(Command("start"))
+# ──────────────── Funções chamadas pelo Router ────────────────
 async def start_onboarding(msg: types.Message, state: FSMContext) -> None:
-    """Entrada no fluxo – pede o contacto."""
+    """/start → estado WAITING_CONTACT e mostra o botão."""
     await state.set_state(AuthStates.WAITING_CONTACT)
-    await state.update_data(contact_warn_sent=False)   # reset do aviso
+    await state.update_data(contact_warn_sent=False)
     await _ensure_contact_prompt(msg.bot, msg.chat.id, state)
 
 
-@router.message(F.text, StateFilter(AuthStates.WAITING_CONTACT))
-async def _reject_plain_text(msg: types.Message, state: FSMContext) -> None:
-    """
-    Apaga texto enquanto esperamos o contacto,
-    avisa uma única vez e re-exibe o botão.
-    """
+async def reject_plain_text(msg: types.Message, state: FSMContext) -> None:
+    """Apaga texto, avisa uma vez e volta a mostrar o botão."""
     with suppress(exceptions.TelegramBadRequest):
         await msg.delete()
 
@@ -178,9 +162,8 @@ async def _reject_plain_text(msg: types.Message, state: FSMContext) -> None:
     await _ensure_contact_prompt(msg.bot, msg.chat.id, state)
 
 
-@router.message(F.contact, StateFilter(AuthStates.WAITING_CONTACT))
 async def handle_contact(msg: types.Message, state: FSMContext) -> None:
-    """Processa Contact e procura utilizador na BD."""
+    """Recebe Contact e procura utilizador na BD."""
     phone_digits = cleanse(msg.contact.phone_number)
 
     pool = await get_pool()
@@ -188,16 +171,13 @@ async def handle_contact(msg: types.Message, state: FSMContext) -> None:
 
     await msg.answer("👍 Obrigado!", reply_markup=types.ReplyKeyboardRemove())
 
-    # limpa prompt
     marker = (await state.get_data()).get("contact_marker")
     if marker:
         await delete_messages(msg.bot, msg.chat.id, marker, soft=False)
 
     if not user:
         await state.clear()
-        await msg.answer(
-            "Número não encontrado. Assim que o seu perfil for criado avisaremos 🙏"
-        )
+        await msg.answer("Número não encontrado. Assim que o seu perfil for criado avisaremos 🙏")
         return
 
     await state.update_data(
@@ -219,10 +199,9 @@ async def handle_contact(msg: types.Message, state: FSMContext) -> None:
         _expire_confirm(msg.bot, confirm.chat.id, confirm.message_id, state)
     )
 
-# ─────────── callbacks «Sim / Não» ───────────
-@router.callback_query(F.data == "link_yes", StateFilter(AuthStates.CONFIRMING_LINK))
+
 async def confirm_link(cb: types.CallbackQuery, state: FSMContext) -> None:
-    """Botão ✅ Sim – associa Telegram-ID e abre o menu."""
+    """Botão ✅ Sim – associa Telegram-ID e abre menu."""
     data: OnboardingData = await state.get_data()
     user_id = data.get("db_user_id")
     if not user_id:
@@ -252,7 +231,6 @@ async def confirm_link(cb: types.CallbackQuery, state: FSMContext) -> None:
         await show_menu(cb.bot, cb.message.chat.id, state, roles)
 
 
-@router.callback_query(F.data == "link_no", StateFilter(AuthStates.CONFIRMING_LINK))
 async def cancel_link(cb: types.CallbackQuery, state: FSMContext) -> None:
     """Botão ❌ Não – aborta o processo."""
     await state.clear()
