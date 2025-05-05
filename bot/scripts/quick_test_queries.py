@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 """
-Pequenos testes manuais às queries base.
+Test-drive das queries principais após a migração:
 
-• Cria um utilizador dummy
-• Adiciona 1 telefone principal
-• Verifica procura por nº de telefone
-• Associa (ou actualiza) telegram_user_id nesse telefone
-• Confirma procura por telegram_user_id
-• Adiciona/garante role 'patient' e lista roles
+Passos
+──────
+1.  Procura inexistente por telegram_user_id.
+2.  Cria um utilizador “dummy”.
+3.  Adiciona telefone principal.
+4.  Procura pelo número de telefone.
+5.  Faz link do telegram_user_id a *esse* telefone.
+6.  Garante a role 'patient' e associa ao utilizador.
+7.  Lista as roles do utilizador.
+
+Pode correr quantas vezes quiser: todas as inserções estão protegidas
+por `ON CONFLICT DO NOTHING`.
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -18,75 +26,63 @@ from bot.database.connection import get_pool
 from bot.database import queries as q
 from bot.utils.phone import cleanse
 
-logging.basicConfig(level="INFO")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)s  %(message)s",
+)
 
-RAW_PHONE = "351916932985"
-PHONE = cleanse(RAW_PHONE)           # deixa só dígitos
+# ─────────────── dados de teste ───────────────
+RAW_PHONE        = "351916932985"
+PHONE_DIGITS     = cleanse(RAW_PHONE)          # só dígitos
+TEST_TG_ID       = 5555                        # qualquer nº ≠ real
+DUMMY_FIRST_NAME = "Test"
+DUMMY_LAST_NAME  = f"User_{datetime.utcnow():%H%M%S}"  # evite colisões
 
-def debug_digits(s: str) -> str:
+# ─────────────── helpers ───────────────
+def spaced_digits(s: str) -> str:
     return " ".join(f"[{c}]" for c in s)
 
+# ─────────────── Script principal ───────────────
 async def main() -> None:
     pool = await get_pool()
-    logging.info("DEBUG PHONE: %s  len=%d", debug_digits(PHONE), len(PHONE))
 
-    ok = await pool.fetchval(
-        "SELECT $1 ~ '^[1-9][0-9]{6,14}$'::text", PHONE
+    logging.info("PHONE  → %s    len=%d", spaced_digits(PHONE_DIGITS), len(PHONE_DIGITS))
+    ok_regex = await pool.fetchval(
+        "SELECT $1 ~ '^[1-9][0-9]{6,14}$'::text",
+        PHONE_DIGITS,
     )
-    logging.info("Regex passa no PG? -> %s", ok)
+    logging.info("Regex no PG passa?  %s", ok_regex)
 
-    # 1) procura (inexistente) por telegram_user_id
-    user = await q.get_user_by_telegram_id(pool, 9999)
-    logging.info("get_user_by_telegram_id(9999) -> %s", user)
+    # 1) procura inexistente
+    logging.info("get_user_by_telegram_id(%s)  → %s",
+                 TEST_TG_ID, await q.get_user_by_telegram_id(pool, TEST_TG_ID))
 
     # 2) cria utilizador dummy
-    rec = await pool.fetchrow(
-        "INSERT INTO users(first_name, last_name) "
-        "VALUES('Test', 'User') RETURNING user_id"
-    )
-    user_id = rec["user_id"]
-    logging.info("Novo user_id → %s", user_id)
+    user_id = await q.create_user(pool, DUMMY_FIRST_NAME, DUMMY_LAST_NAME)
+    logging.info("Utilizador criado  user_id=%s", user_id)
 
-    # 3) adiciona telefone primário
-    await pool.execute(
-        """
-        INSERT INTO user_phones(user_id, phone_number, is_primary)
-        VALUES($1, $2, TRUE)
-        ON CONFLICT DO NOTHING
-        """,
-        user_id,
-        PHONE,
-    )
+    # 3) telefone principal
+    await q.add_phone(pool, user_id, PHONE_DIGITS, is_primary=True)
+    logging.info("Telefone %s inserido/garantido", PHONE_DIGITS)
 
-    # 4) busca pelo telefone
-    user = await q.get_user_by_phone(pool, PHONE)
-    logging.info("get_user_by_phone -> %s", user)
+    # 4) procura por telefone
+    logging.info("get_user_by_phone(%s) → %s",
+                 PHONE_DIGITS, await q.get_user_by_phone(pool, PHONE_DIGITS))
 
-    # 5) liga telegram id ao telefone recém-inserido
-    await q.link_telegram_id(pool, user_id, PHONE, 5555)
-    linked = await q.get_user_by_telegram_id(pool, 5555)
-    logging.info("Depois de link_telegram_id -> %s", linked)
+    # 5) liga telegram_user_id a ESTE telefone
+    await q.link_telegram_id(pool, user_id, PHONE_DIGITS, TEST_TG_ID)
+    logging.info("Depois de link_telegram_id → %s",
+                 await q.get_user_by_telegram_id(pool, TEST_TG_ID))
 
     # 6) garante role 'patient' e associa
     await pool.execute(
         "INSERT INTO roles(role_name) VALUES('patient') ON CONFLICT DO NOTHING"
     )
-    role_id = await pool.fetchval(
-        "SELECT role_id FROM roles WHERE role_name='patient'"
-    )
-    await pool.execute(
-        """
-        INSERT INTO user_roles(user_id, role_id)
-        VALUES($1,$2)
-        ON CONFLICT DO NOTHING
-        """,
-        user_id,
-        role_id,
-    )
+    await q.add_user_role(pool, user_id, "patient")
 
     # 7) lista roles
     roles = await q.get_user_roles(pool, user_id)
-    logging.info("roles -> %s", roles)
+    logging.info("Roles para %s → %s", user_id, roles)
 
     await pool.close()
 
