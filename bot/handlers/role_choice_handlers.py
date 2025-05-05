@@ -75,7 +75,7 @@ async def choose_role(cb: types.CallbackQuery, state: FSMContext) -> None:
         return
 
     # Pop-up + remoção do selector
-    await close_menu_with_alert(cb, f"✅ Perfil {_label(role)} seleccionado!")
+    await close_menu_with_alert(cb, f"✅ Perfil {_label(role)} seleccionado!", state)
 
     # Actualiza FSM e abre o menu do papel escolhido
     await state.update_data(active_role=role)
