@@ -118,7 +118,7 @@ async def _hide_menu_after(
             warn = await bot.send_message(
                 chat_id,
                 f"⌛️ O menu ficou inactivo durante {menu_timeout}s e foi ocultado.\n"
-                "Use /start para o reabrir.",
+                "Envie /start (ou Menu > Iniciar) para o reabrir.",
             )
         if warn:
             await asyncio.sleep(message_timeout)
