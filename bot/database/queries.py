@@ -2,31 +2,32 @@
 """
 Operações CRUD (asyncpg) para a base de dados Fisina.
 
-Principais mudanças (maio / 2025)
-─────────────────────────────────
-• `telegram_user_id` foi movido de *users* → *user_phones*.
-  - get_user_by_telegram_id() faz agora JOIN a user_phones.
-  - link_telegram_id() actualiza user_phones em vez de users.
-
-• API externa inalterada — chamadas existentes continuam a funcionar.
+Alterações (mai-2025)
+─────────────────────
+• `telegram_user_id` mudou de *users* → *user_phones*.
+  - get_user_by_telegram_id() faz JOIN a user_phones
+  - link_telegram_id(user_id, phone_number, tg_id) actualiza user_phones
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
 from datetime import date
+from typing import Any, Dict, List, Optional
 
 from asyncpg import Pool, Record
 
 
 # ─────────────────────── helpers internos ────────────────────────
 def _to_dict(rec: Record | None) -> Optional[Dict[str, Any]]:
-    """Converte Record → dict ou devolve None."""
+    """Converte Record → dict (ou devolve None)."""
     return dict(rec) if rec else None
 
 
 # ─────────────────────── consultas de leitura ─────────────────────
-async def get_user_by_telegram_id(pool: Pool, tg_id: int) -> Optional[Dict[str, Any]]:
+async def get_user_by_telegram_id(
+    pool: Pool,
+    tg_id: int,
+) -> Optional[Dict[str, Any]]:
     """
     Devolve o utilizador associado a *tg_id* (JOIN a user_phones).
     """
@@ -43,7 +44,10 @@ async def get_user_by_telegram_id(pool: Pool, tg_id: int) -> Optional[Dict[str, 
     return _to_dict(rec)
 
 
-async def get_user_by_phone(pool: Pool, phone_digits: str) -> Optional[Dict[str, Any]]:
+async def get_user_by_phone(
+    pool: Pool,
+    phone_digits: str,
+) -> Optional[Dict[str, Any]]:
     """
     Procura utilizador através do número de telefone normalizado.
     """
@@ -60,28 +64,36 @@ async def get_user_by_phone(pool: Pool, phone_digits: str) -> Optional[Dict[str,
     return _to_dict(rec)
 
 
-async def link_telegram_id(pool: Pool, user_id: str, tg_id: int) -> None:
+# ─────────────────── ligação do Telegram (nova) ───────────────────
+async def link_telegram_id(
+    pool: Pool,
+    user_id: str,
+    phone_number: str,
+    tg_id: int,
+) -> None:
     """
-    Associa (ou actualiza) *telegram_user_id* aos números de telefone do utilizador.
+    Associa (ou actualiza) *telegram_user_id* **apenas** para o telefone dado.
 
-    ⚠️  Mantém a assinatura compatível:
-        – actualiza todos os registos desse user onde telegram_user_id está NULL
-          (ou já é o próprio *tg_id*).
-        – respeita a restrição UNIQUE da coluna.
+    • Actualiza a linha cujo (user_id, phone_number) coincide.
+    • Só altera se telegram_user_id estiver NULL ou já for o próprio tg_id,
+      respeitando o UNIQUE em (telegram_user_id).
     """
     await pool.execute(
         """
         UPDATE user_phones
-        SET    telegram_user_id = $2,
+           SET telegram_user_id = $3,
                updated_at       = now()
-        WHERE  user_id = $1
-          AND (telegram_user_id IS NULL OR telegram_user_id = $2)
+         WHERE user_id      = $1
+           AND phone_number = $2
+           AND (telegram_user_id IS NULL OR telegram_user_id = $3)
         """,
-        user_id, tg_id,
+        user_id,
+        phone_number,
+        tg_id,
     )
 
 
-async def get_user_roles(pool: Pool, user_id: str) -> list[str]:
+async def get_user_roles(pool: Pool, user_id: str) -> List[str]:
     """
     Lista de roles (lower-case) atribuídas ao utilizador.
     """
@@ -89,7 +101,7 @@ async def get_user_roles(pool: Pool, user_id: str) -> list[str]:
         """
         SELECT r.role_name
         FROM   user_roles ur
-        JOIN   roles  r USING (role_id)
+        JOIN   roles r USING (role_id)
         WHERE  ur.user_id = $1
         ORDER  BY lower(r.role_name)
         """,
@@ -114,7 +126,9 @@ async def create_user(
         VALUES ($1, $2, $3)
         RETURNING user_id
         """,
-        first_name, last_name, tax_id,
+        first_name,
+        last_name,
+        tax_id,
     )
     return str(rec["user_id"])
 
@@ -131,7 +145,8 @@ async def add_user_role(pool: Pool, user_id: str, role_name: str) -> None:
             VALUES ($1, $2)
             ON CONFLICT DO NOTHING
             """,
-            user_id, role_id,
+            user_id,
+            role_id,
         )
 
 
@@ -147,7 +162,9 @@ async def add_email(
         VALUES ($1, $2, $3)
         ON CONFLICT DO NOTHING
         """,
-        user_id, email, is_primary,
+        user_id,
+        email,
+        is_primary,
     )
 
 
@@ -166,7 +183,10 @@ async def add_phone(
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (phone_number) DO NOTHING
         """,
-        user_id, phone_number, is_primary, telegram_user_id,
+        user_id,
+        phone_number,
+        is_primary,
+        telegram_user_id,
     )
 
 
@@ -189,8 +209,13 @@ async def add_address(
         VALUES ($1,$2,$3,$4,$5,$6,$7)
         ON CONFLICT DO NOTHING
         """,
-        user_id, country, city, postal_code,
-        street, street_number, is_primary,
+        user_id,
+        country,
+        city,
+        postal_code,
+        street,
+        street_number,
+        is_primary,
     )
 
 
@@ -218,7 +243,10 @@ async def add_user(
             VALUES ($1,$2,$3,$4)
             RETURNING user_id
             """,
-            first_name, last_name, date_of_birth, created_by,
+            first_name,
+            last_name,
+            date_of_birth,
+            created_by,
         )
 
         role_id = await conn.fetchval(
@@ -228,7 +256,8 @@ async def add_user(
         if role_id:
             await conn.execute(
                 "INSERT INTO user_roles (user_id, role_id) VALUES ($1,$2)",
-                user_id, role_id,
+                user_id,
+                role_id,
             )
 
         await conn.execute(
@@ -236,7 +265,8 @@ async def add_user(
             INSERT INTO user_emails (user_id, email, is_primary)
             VALUES ($1,$2,TRUE)
             """,
-            user_id, email,
+            user_id,
+            email,
         )
 
         await conn.execute(
@@ -244,7 +274,8 @@ async def add_user(
             INSERT INTO user_phones (user_id, phone_number, is_primary)
             VALUES ($1,$2,TRUE)
             """,
-            user_id, f"{phone_cc}{phone}",
+            user_id,
+            f"{phone_cc}{phone}",
         )
 
     return str(user_id)
