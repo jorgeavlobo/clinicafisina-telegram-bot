@@ -72,35 +72,60 @@ async def link_telegram_id(
     tg_id: int,
 ) -> None:
     """
-    (Re)liga *tg_id* **exclusivamente** ao número `phone_digits` desse utilizador.
+    Liga (ou actualiza) `telegram_user_id` **apenas** ao telefone indicado.
 
-    Passos:
-    1) Remove tg_id de qualquer outro registo (garante UNIQUE).
-    2) Atribui tg_id ao nº indicado, mesmo que já exista um id antigo.
+    Regras:
+    1.  Se o TG-ID já estiver nesse MESMO user + telefone → não faz nada.
+    2.  Se o TG-ID estiver noutro registo → é limpo (SET NULL) nesse registo.
+    3.  Depois grava-o no telefone pretendido.  
+        − Caso o registo ainda não tenha TG-ID, actualiza-o.  
+        − Se, por algum motivo, o telefone não existir, insere-o.
     """
+
     async with pool.acquire() as conn, conn.transaction():
-        # 1) liberta o TG-ID (se já existir algures)
+
+        # ① libertar o TG-ID de QUALQUER outro registo
         await conn.execute(
             """
             UPDATE user_phones
             SET    telegram_user_id = NULL,
                    updated_at       = now()
-            WHERE  telegram_user_id = $1
+            WHERE  telegram_user_id = $3
+              AND NOT (user_id = $1 AND phone_number = $2)
             """,
-            tg_id,
+            user_id,           # $1
+            phone_digits,      # $2
+            tg_id,             # $3
         )
 
-        # 2) grava no nº correcto
-        await conn.execute(
+        # ② tentar actualizar o telefone alvo
+        updated = await conn.execute(
             """
             UPDATE user_phones
             SET    telegram_user_id = $3,
                    updated_at       = now()
             WHERE  user_id      = $1
               AND  phone_number = $2
+              AND (telegram_user_id IS DISTINCT FROM $3)
             """,
-            user_id, phone_digits, tg_id,
+            user_id,
+            phone_digits,
+            tg_id,
         )
+
+        # ③ se não existia (UPDATE 0 rows) -> inserir
+        if updated.startswith("UPDATE 0"):
+            await conn.execute(
+                """
+                INSERT INTO user_phones
+                      (user_id, phone_number, is_primary, telegram_user_id)
+                VALUES ($1,     $2,          FALSE,      $3)
+                ON CONFLICT (phone_number)
+                    DO UPDATE SET telegram_user_id = EXCLUDED.telegram_user_id,
+                                 updated_at       = now()
+                """,
+                user_id, phone_digits, tg_id,
+            )
 
 
 async def get_user_roles(pool: Pool, user_id: str) -> List[str]:
