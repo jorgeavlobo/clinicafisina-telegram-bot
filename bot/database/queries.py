@@ -68,29 +68,39 @@ async def get_user_by_phone(
 async def link_telegram_id(
     pool: Pool,
     user_id: str,
-    phone_number: str,
+    phone_digits: str,
     tg_id: int,
 ) -> None:
     """
-    Associa (ou actualiza) *telegram_user_id* **apenas** para o telefone dado.
+    (Re)liga *tg_id* **exclusivamente** ao número `phone_digits` desse utilizador.
 
-    • Actualiza a linha cujo (user_id, phone_number) coincide.
-    • Só altera se telegram_user_id estiver NULL ou já for o próprio tg_id,
-      respeitando o UNIQUE em (telegram_user_id).
+    Passos:
+    1) Remove tg_id de qualquer outro registo (garante UNIQUE).
+    2) Atribui tg_id ao nº indicado, mesmo que já exista um id antigo.
     """
-    await pool.execute(
-        """
-        UPDATE user_phones
-           SET telegram_user_id = $3,
-               updated_at       = now()
-         WHERE user_id      = $1
-           AND phone_number = $2
-           AND (telegram_user_id IS NULL OR telegram_user_id = $3)
-        """,
-        user_id,
-        phone_number,
-        tg_id,
-    )
+    async with pool.acquire() as conn, conn.transaction():
+        # 1) liberta o TG-ID (se já existir algures)
+        await conn.execute(
+            """
+            UPDATE user_phones
+            SET    telegram_user_id = NULL,
+                   updated_at       = now()
+            WHERE  telegram_user_id = $1
+            """,
+            tg_id,
+        )
+
+        # 2) grava no nº correcto
+        await conn.execute(
+            """
+            UPDATE user_phones
+            SET    telegram_user_id = $3,
+                   updated_at       = now()
+            WHERE  user_id      = $1
+              AND  phone_number = $2
+            """,
+            user_id, phone_digits, tg_id,
+        )
 
 
 async def get_user_roles(pool: Pool, user_id: str) -> List[str]:
