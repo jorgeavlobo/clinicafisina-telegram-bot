@@ -23,6 +23,7 @@ from contextlib import suppress
 from typing import List, TypedDict
 
 from aiogram import F, Router, exceptions, types
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 
