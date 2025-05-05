@@ -258,7 +258,7 @@ async def confirm_link(cb: types.CallbackQuery, state: FSMContext) -> None:
     await state.clear()
 
     await cb.message.edit_text(
-        f"✅ O utilizador *{first} {last}* foi associado ao seu Telegram 💬",
+        f"✅ O utilizador *{first} {last}* foi associado ao seu Telegram. 💬",
         parse_mode="Markdown",
     )
     await cb.answer()
