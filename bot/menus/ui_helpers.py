@@ -257,29 +257,39 @@ async def refresh_menu(
 async def close_menu_with_alert(
     cb: types.CallbackQuery,
     alert_text: str,
+    state: FSMContext | None = None,         # ← NOVO (opcional)
 ) -> None:
     """
-    Show a pop-up (`show_alert=True`) and remove the menu message.
+    Mostra pop-up modal e remove completamente a mensagem-menu.
 
-    Steps:
-        1. Answer the callback with a modal pop-up.
-        2. Try to delete the message (title + buttons vanish).
-        3. If delete fails, blank the message (ZERO_WIDTH + remove keyboard).
+    Passos:
+        1. answerCallbackQuery (pop-up).
+        2. deleteMessage para apagar título+botões.
+        3. Se o delete falhar, edita texto→ZERO_WIDTH e reply_markup→None
+           (mensagem quase invisível).
+        4. [opcional] se `state` for fornecido, limpa
+           menu_msg_id / menu_chat_id no FSM para impedir que o
+           cronómetro automático mostre «menu inactivo».
     """
-    # 1) modal pop-up – immediate user feedback
+    # 1) feedback imediato
     await cb.answer(alert_text, show_alert=True)
 
-    # 2) hard delete attempt
+    # 2) tentativa de apagar
+    deleted = False
     try:
         await cb.message.delete()
-        return  # success – done
+        deleted = True
     except exceptions.TelegramBadRequest:
-        # 3) fallback: blank out the message
+        deleted = False
+
+    # 3) fallback: “esvaziar” a mensagem
+    if not deleted:
         with suppress(exceptions.TelegramBadRequest):
-            await cb.message.edit_text(
-                ZERO_WIDTH,
-                reply_markup=None,
-            )
+            await cb.message.edit_text(ZERO_WIDTH, reply_markup=None)
+
+    # 4) limpa registos do menu no FSM (se aplicável)
+    if state is not None:
+        await state.update_data(menu_msg_id=None, menu_chat_id=None)
 
 # ───────────────────────── bulk (soft/hard) delete ──────────────────────
 async def delete_messages(
