@@ -99,14 +99,14 @@ async def open_users(cb: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(AdminMenuStates.MAIN, F.data == "admin:messages")
 async def open_messages(cb: types.CallbackQuery, state: FSMContext):
-    await close_menu_with_alert(cb, "🚧 Mensagens – em desenvolvimento")
+    await close_menu_with_alert(cb, "🚧 Mensagens – em desenvolvimento", state)
     await state.set_state(AdminMenuStates.MAIN)
 
 # ─────────────────────────────── Agenda ───────────────────────────────
 @router.callback_query(AdminMenuStates.AGENDA, F.data.in_(["agenda:geral", "agenda:fisios"]))
 async def agenda_placeholder(cb: types.CallbackQuery, state: FSMContext):
     destino = "Geral" if cb.data.endswith("geral") else "Fisioterapeuta"
-    await close_menu_with_alert(cb, f"📅 *Agenda {destino}* – em desenvolvimento")
+    await close_menu_with_alert(cb, f"📅 *Agenda {destino}* – em desenvolvimento", state)
     await state.set_state(AdminMenuStates.MAIN)
 
 @router.callback_query(AdminMenuStates.AGENDA, F.data == "back")
@@ -117,7 +117,7 @@ async def agenda_back(cb: types.CallbackQuery, state: FSMContext):
 # ─────────────────────────── Utilizadores ───────────────────────────
 @router.callback_query(AdminMenuStates.USERS, F.data == "users:search")
 async def users_search(cb: types.CallbackQuery, state: FSMContext):
-    await close_menu_with_alert(cb, "🔍 *Pesquisar utilizador* – em desenvolvimento")
+    await close_menu_with_alert(cb, "🔍 *Pesquisar utilizador* – em desenvolvimento", state)
     await state.set_state(AdminMenuStates.USERS)
 
 @router.callback_query(AdminMenuStates.USERS, F.data == "users:add")
@@ -134,7 +134,7 @@ async def users_back(cb: types.CallbackQuery, state: FSMContext):
 @router.callback_query(AddUserFlow.CHOOSING_ROLE, F.data.startswith("role:"))
 async def adduser_choose_role(cb: types.CallbackQuery, state: FSMContext):
     role = cb.data.split(":", 1)[1]
-    await close_menu_with_alert(cb, f"✅ *{role.title()}* seleccionado! Vamos pedir os dados…")
+    await close_menu_with_alert(cb, f"✅ *{role.title()}* seleccionado! Vamos pedir os dados…", state)
     await state.update_data(role=role)
     await cb.message.answer("Primeiro(s) nome(s):", reply_markup=cancel_back_kbd())
     await state.set_state(AddUserFlow.FIRST_NAME)
