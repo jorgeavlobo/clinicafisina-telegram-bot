@@ -128,7 +128,7 @@ async def _expire_contact_request(
 
         warn = await bot.send_message(
             chat_id,
-            "⚠️ Não obtivemos resposta em 60 s.\n"
+            "⌛ Não obtivemos resposta em 60 s.\n"
             "Envie /start (ou Menu > Iniciar) para tentar novamente.",
         )
         await asyncio.sleep(MENU_TIMEOUT)
@@ -155,7 +155,8 @@ async def _expire_confirm(
 
         warn = await bot.send_message(
             chat_id,
-            "⚠️ Tempo expirado. Envie /start para tentar novamente.",
+            "⌛ Não obtivemos resposta em 60 s.\n"
+            "Envie /start (ou Menu > Iniciar) para tentar novamente.",
         )
         await asyncio.sleep(MENU_TIMEOUT)
         with suppress(exceptions.TelegramBadRequest):
